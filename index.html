@@ -1,0 +1,1701 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ОРБИТА — Космический Архив</title>
+    <link rel="icon" type="image/png" href="ssma.png">
+    
+    <!-- Шрифты Ретро-Футуризма и закруглённые иконки -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Russo+One&family=Montserrat:wght@500;700;900&family=Orbitron:wght@800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-analytics.js";
+        import { getFirestore, collection, query, orderBy, getDocs, doc, updateDoc, increment } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { 
+            getAuth, 
+            GoogleAuthProvider, 
+            OAuthProvider, 
+            signInWithPopup, 
+            createUserWithEmailAndPassword, 
+            signInWithEmailAndPassword, 
+            signOut, 
+            onAuthStateChanged 
+        } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBYOyzTnpv6RH9sGziwzf2tJTW5ifuEyqY",
+            authDomain: "orbita1917.firebaseapp.com",
+            projectId: "orbita1917",
+            storageBucket: "orbita1917.firebasestorage.app",
+            messagingSenderId: "1085452844318",
+            appId: "1:1085452844318:web:dfee91a234981b58619d0f",
+            measurementId: "G-HY2LRW1Q8T"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const analytics = getAnalytics(app);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        let currentUser = null;
+        let isLoginMode = false;
+
+        window.openAuthModal = function() {
+            if (currentUser) {
+                if (confirm(`Вы вошли как ${currentUser.displayName || currentUser.email}.\nВыйти из аккаунта?`)) {
+                    signOut(auth);
+                }
+                return;
+            }
+            document.getElementById('auth-modal').style.display = 'flex';
+        };
+
+        window.closeAuthModal = function() {
+            document.getElementById('auth-modal').style.display = 'none';
+        };
+
+        window.toggleAuthMode = function() {
+            isLoginMode = !isLoginMode;
+            const title = document.getElementById('auth-modal-title');
+            const submitBtn = document.getElementById('auth-submit-btn');
+            const toggleText = document.getElementById('auth-toggle-text');
+            const toggleLink = document.getElementById('auth-toggle-link');
+
+            if (isLoginMode) {
+                title.textContent = 'Вход в аккаунт';
+                submitBtn.textContent = 'Войти';
+                toggleText.textContent = 'Ещё нет аккаунта?';
+                toggleLink.textContent = 'Зарегистрироваться';
+            } else {
+                title.textContent = 'Регистрация';
+                submitBtn.textContent = 'Зарегистрироваться';
+                toggleText.textContent = 'Уже есть аккаунт?';
+                toggleLink.textContent = 'Войти';
+            }
+        };
+
+        window.handleEmailAuth = async function(e) {
+            e.preventDefault();
+            const email = document.getElementById('auth-email').value;
+            const password = document.getElementById('auth-password').value;
+
+            try {
+                if (isLoginMode) {
+                    await signInWithEmailAndPassword(auth, email, password);
+                } else {
+                    await createUserWithEmailAndPassword(auth, email, password);
+                }
+                closeAuthModal();
+            } catch (error) {
+                alert('Ошибка авторизации: ' + error.message);
+            }
+        };
+
+        window.handleGoogleAuth = async function() {
+            const provider = new GoogleAuthProvider();
+            try {
+                await signInWithPopup(auth, provider);
+                closeAuthModal();
+            } catch (error) {
+                alert('Ошибка входа через Google: ' + error.message);
+            }
+        };
+
+        window.handleAppleAuth = async function() {
+            const provider = new OAuthProvider('apple.com');
+            try {
+                await signInWithPopup(auth, provider);
+                closeAuthModal();
+            } catch (error) {
+                alert('Ошибка входа через Apple: ' + error.message);
+            }
+        };
+
+        onAuthStateChanged(auth, (user) => {
+            currentUser = user;
+            const profileText = document.getElementById('header-profile-text');
+            if (user) {
+                profileText.textContent = user.displayName ? user.displayName.split(' ')[0] : 'Профиль';
+            } else {
+                profileText.textContent = 'Войти';
+            }
+        });
+
+        const viewedPosts = new Set();
+        let currentLang = 'ru';
+        const translationCache = new Map();
+        const sectionCache = new Map();
+        let activeVideoForDownload = '';
+
+        const userVotes = JSON.parse(localStorage.getItem('orbit_user_votes') || '{}');
+        function saveUserVotes() {
+            localStorage.setItem('orbit_user_votes', JSON.stringify(userVotes));
+        }
+
+        function escapeHTML(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function isValidURL(url) {
+            if (!url) return false;
+            try {
+                const parsed = new URL(url, window.location.origin);
+                return ['http:', 'https:', 'mailto:', 'tel:'].includes(parsed.protocol) || url.startsWith('/') || url.startsWith('#');
+            } catch { return false; }
+        }
+
+        function safelySetTextContent(element, text) {
+            if (!element) return;
+            element.textContent = text || '';
+            element.setAttribute('data-original', text || '');
+        }
+
+        async function fetchTranslation(text, targetLang = 'en') {
+            if (!text || !text.trim() || targetLang === 'ru') return text;
+            const cacheKey = `${targetLang}:${text}`;
+            if (translationCache.has(cacheKey)) return translationCache.get(cacheKey);
+
+            try {
+                const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                if (data && data[0]) {
+                    const result = data[0].map(item => item[0]).join('');
+                    translationCache.set(cacheKey, result);
+                    return result;
+                }
+            } catch (e) { console.warn("Translate error:", e); }
+            return text;
+        }
+
+        window.parseContent = function(text, mediaUrls, fallbackUrl) {
+            let urls = [];
+            if (mediaUrls && Array.isArray(mediaUrls)) urls = [...mediaUrls];
+            else if (fallbackUrl) urls = [fallbackUrl];
+            
+            let safeText = escapeHTML(text || "");
+            safeText = safeText.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, linkText, url) => {
+                if (isValidURL(url.trim())) return `<a href="${escapeHTML(url.trim())}" target="_blank" class="post-inline-link" rel="noopener noreferrer">${linkText}</a>`;
+                return linkText;
+            });
+            
+            let usedIndexes = new Set();
+            safeText = safeText.replace(/\[img(\d+)\]/g, (match, num) => {
+                const idx = parseInt(num) - 1;
+                if (urls[idx] && isValidURL(urls[idx])) {
+                    usedIndexes.add(idx);
+                    return `<img src="${escapeHTML(urls[idx])}" class="inline-post-img" alt="Фото" loading="lazy">`;
+                }
+                return "";
+            });
+
+            let topImagesHtml = "";
+            urls.forEach((url, idx) => {
+                if (!usedIndexes.has(idx) && isValidURL(url)) {
+                    topImagesHtml += `<img src="${escapeHTML(url)}" class="inline-post-img" style="margin-bottom:15px;" alt="Фото" loading="lazy">`;
+                }
+            });
+
+            return topImagesHtml + `<div class="word-text i18n-translatability" data-original="${escapeHTML(text || "")}">${safeText}</div>`;
+        };
+
+        function initAboutText() {
+            const aboutContainer = document.getElementById("about-container");
+            getDoc(doc(db, "about", "main_info")).then((docSnap) => {
+                if (docSnap.exists() && docSnap.data().text) {
+                    const text = docSnap.data().text;
+                    const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+                    let html = "";
+                    paragraphs.forEach(p => {
+                        const safeP = escapeHTML(p.trim());
+                        html += `<p class="i18n-translatability" data-original="${safeP}">${safeP}</p>`;
+                    });
+                    aboutContainer.innerHTML = html;
+                } else {
+                    aboutContainer.innerHTML = `<p class="i18n-translatability" data-original="Информация пока не добавлена. Скоро здесь появится текст из админ-панели.">Информация пока не добавлена. Скоро здесь появится текст из админ-панели.</p>`;
+                }
+                if (currentLang !== 'ru') applyLanguage(currentLang);
+            }).catch(() => {
+                aboutContainer.innerHTML = `<p class="i18n-translatability" data-original="Информация пока не добавлена. Скоро здесь появится текст из админ-панели.">Информация пока не добавлена. Скоро здесь появится текст из админ-панели.</p>`;
+            });
+        }
+
+        async function initDynamicQuotes() {
+            const quoteContainer = document.getElementById("quote-container");
+            try {
+                const querySnapshot = await getDocs(collection(db, "quotes"));
+                let loadedQuotes = [];
+                querySnapshot.forEach((docSnap) => {
+                    const d = docSnap.data();
+                    if(d.text && d.author) loadedQuotes.push({ text: d.text, author: d.author });
+                });
+                if (loadedQuotes.length > 0) {
+                    const selected = loadedQuotes[Math.floor(Math.random() * loadedQuotes.length)];
+                    safelySetTextContent(quoteContainer, `«${selected.text}» — ${selected.author}`);
+                } else {
+                    safelySetTextContent(quoteContainer, `«Цитаты скоро появятся в админ-панели.» — ОРБИТА`);
+                }
+            } catch { 
+                safelySetTextContent(quoteContainer, "«Цитаты скоро появятся в админ-панели.» — ОРБИТА"); 
+            }
+        }
+
+        window.toggleSidebar = function() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('sidebar-overlay');
+            sidebar.classList.toggle('open');
+            overlay.classList.toggle('active');
+        };
+
+        window.closeSidebar = function() {
+            document.getElementById('sidebar').classList.remove('open');
+            document.getElementById('sidebar-overlay').classList.remove('active');
+        };
+
+        window.toggleLangModal = function() {
+            const modal = document.getElementById('lang-modal');
+            modal.style.display = modal.style.display === 'flex' ? 'none' : 'flex';
+        };
+
+        document.addEventListener('click', (e) => {
+            const modal = document.getElementById('lang-modal');
+            const box = document.querySelector('.lang-switch-box');
+            if (modal && modal.style.display === 'flex' && box && !box.contains(e.target)) modal.style.display = 'none';
+            document.querySelectorAll('.v-more-menu.open').forEach(menu => {
+                if (!menu.contains(e.target) && !menu.previousElementSibling.contains(e.target)) menu.classList.remove('open');
+            });
+        });
+
+        window.switchLanguage = async function(lang) {
+            currentLang = lang;
+            document.querySelectorAll('.lang-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('data-lang') === lang);
+                btn.disabled = true;
+            });
+            document.getElementById('lang-modal').style.display = 'none';
+            await applyLanguage(lang);
+            document.querySelectorAll('.lang-btn').forEach(btn => btn.disabled = false);
+        };
+
+        async function applyLanguage(lang) {
+            const elements = Array.from(document.querySelectorAll('.i18n-translatability, .card h3, .word-text'));
+            const container = document.getElementById('progress-bar-container');
+            const label = document.getElementById('progress-bar-label');
+            const percent = document.getElementById('progress-bar-percent');
+            const fill = document.getElementById('progress-bar-fill');
+
+            if (lang === 'ru') {
+                container.style.display = 'none';
+                elements.forEach(el => {
+                    const orig = el.getAttribute('data-original') || el.textContent.trim();
+                    el.classList.remove('translating-pulse');
+                    el.textContent = orig;
+                });
+                return;
+            }
+
+            label.textContent = 'Выполняется перевод данных...';
+            container.style.display = 'block';
+            percent.textContent = '0%';
+            fill.style.width = '0%';
+
+            elements.forEach(el => {
+                if (!el.getAttribute('data-original')) el.setAttribute('data-original', el.textContent.trim());
+                el.classList.add('translating-pulse');
+            });
+
+            let done = 0;
+            for (const el of elements) {
+                const orig = el.getAttribute('data-original') || el.textContent.trim();
+                const translated = await fetchTranslation(orig, lang);
+                el.classList.remove('translating-pulse');
+                el.textContent = translated;
+                done++;
+                const p = Math.round((done / elements.length) * 100);
+                percent.textContent = `${p}%`;
+                fill.style.width = `${p}%`;
+            }
+            setTimeout(() => { if (currentLang !== 'ru') container.style.display = 'none'; }, 1500);
+        }
+
+        window.handleVote = async function(postId, voteType, sectionId) {
+            const card = document.querySelector(`.section-block[data-section="${sectionId}"] .card[data-id="${postId}"]`);
+            if (!card) return;
+
+            const plusBtn = card.querySelector('.btn-vote-plus');
+            const minusBtn = card.querySelector('.btn-vote-minus');
+            const ratingDisplay = card.querySelector('.rating-score');
+            
+            let currentScore = parseInt(card.getAttribute('data-score') || '0', 10);
+            const voteKey = `${sectionId}_${postId}`;
+            const prevVote = userVotes[voteKey] || 0;
+
+            let newVote = 0;
+            let delta = 0;
+
+            if (voteType === 1) {
+                if (prevVote === 1) { newVote = 0; delta = -1; }
+                else if (prevVote === -1) { newVote = 1; delta = 2; }
+                else { newVote = 1; delta = 1; }
+            } else if (voteType === -1) {
+                if (prevVote === -1) { newVote = 0; delta = 1; }
+                else if (prevVote === 1) { newVote = -1; delta = -2; }
+                else { newVote = -1; delta = -1; }
+            }
+
+            const newScore = currentScore + delta;
+            card.setAttribute('data-score', newScore);
+            userVotes[voteKey] = newVote;
+            saveUserVotes();
+
+            updateRatingUI(plusBtn, minusBtn, ratingDisplay, newScore, newVote);
+
+            try {
+                const docRef = doc(db, sectionId, postId);
+                await updateDoc(docRef, { rating: increment(delta) });
+            } catch (err) {
+                console.warn("Ошибка обновления рейтинга:", err);
+            }
+        };
+
+        function updateRatingUI(plusBtn, minusBtn, ratingDisplay, score, userVote) {
+            if (plusBtn) plusBtn.classList.toggle('voted-plus', userVote === 1);
+            if (minusBtn) minusBtn.classList.toggle('voted-minus', userVote === -1);
+
+            if (ratingDisplay) {
+                let formatted = score;
+                ratingDisplay.className = 'rating-score';
+                if (score > 0) { formatted = `+${score}`; ratingDisplay.classList.add('positive'); }
+                else if (score < 0) { formatted = `${score}`; ratingDisplay.classList.add('negative'); }
+                else { formatted = `0`; ratingDisplay.classList.add('neutral'); }
+                ratingDisplay.textContent = formatted;
+            }
+        }
+
+        window.initCustomVideoPlayer = function(container) {
+            const player = container.querySelector('.custom-video-player');
+            if (!player) return;
+
+            const video = player.querySelector('video');
+            const wrapper = player.querySelector('.v-wrapper');
+            const overlay = player.querySelector('.v-overlay');
+            const playCenterBtn = player.querySelector('.v-play-center');
+            const playBtn = player.querySelector('.v-play-btn');
+            const playIcon = playBtn ? playBtn.querySelector('.material-icons-round') : null;
+            const centerIcon = playCenterBtn ? playCenterBtn.querySelector('.material-icons-round') : null;
+            const progressBar = player.querySelector('.v-progress-bar');
+            const progressFill = player.querySelector('.v-progress-fill');
+            const timeDisplay = player.querySelector('.v-time-display');
+            
+            const moreBtn = player.querySelector('.v-more-btn');
+            const moreMenu = player.querySelector('.v-more-menu');
+            const menuDownloadBtn = player.querySelector('.v-menu-download');
+            const menuShareBtn = player.querySelector('.v-menu-share');
+            const menuMuteBtn = player.querySelector('.v-menu-mute');
+            const menuSpeedBtn = player.querySelector('.v-menu-speed');
+            const menuQualityBtn = player.querySelector('.v-menu-quality');
+            const fsBtn = player.querySelector('.v-fs-btn');
+
+            const speedOverlay = player.querySelector('.v-gesture-speed');
+            const seekLeftOverlay = player.querySelector('.v-gesture-seek-left');
+            const seekRightOverlay = player.querySelector('.v-gesture-seek-right');
+
+            let isLoaded = false;
+            wrapper.addEventListener('contextmenu', (e) => e.preventDefault());
+
+            function formatTime(seconds) {
+                if (isNaN(seconds) || !isFinite(seconds)) return "00:00";
+                const mins = Math.floor(seconds / 60);
+                const secs = Math.floor(seconds % 60);
+                return `${mins < 10 ? '0' : ''}${mins}:${secs < 10 ? '0' : ''}${secs}`;
+            }
+
+            function loadVideo() {
+                if (isLoaded) return;
+                const src = video.getAttribute('data-src');
+                if (src && !video.src) {
+                    video.src = src;
+                    video.load();
+                    video.currentTime = 0.1;
+                }
+            }
+
+            video.addEventListener('loadedmetadata', () => {
+                isLoaded = true;
+                video.currentTime = 0.1;
+                if (timeDisplay) timeDisplay.textContent = `00:00 / ${formatTime(video.duration)}`;
+            });
+
+            function togglePlay() {
+                if (!isLoaded) {
+                    loadVideo();
+                    video.autoplay = true;
+                    if (video.readyState >= 1) video.play().catch(e => {});
+                    return;
+                }
+                if (video.paused) {
+                    document.querySelectorAll('video, audio').forEach(v => { if (v !== video) v.pause(); });
+                    video.play().catch(e => {});
+                } else {
+                    video.pause();
+                }
+            }
+
+            if (playCenterBtn) playCenterBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
+            if (playBtn) playBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
+            if (overlay) overlay.addEventListener('click', togglePlay);
+
+            let lastTapTime = 0;
+            let longPressTimer = null;
+
+            wrapper.addEventListener('touchstart', (e) => {
+                loadVideo();
+                const now = Date.now();
+                const tapGap = now - lastTapTime;
+                const rect = wrapper.getBoundingClientRect();
+                const touchX = e.touches[0].clientX - rect.left;
+
+                if (tapGap < 300 && tapGap > 0) {
+                    clearTimeout(longPressTimer);
+                    if (touchX > rect.width / 2) {
+                        video.currentTime = Math.min(video.duration || 0, video.currentTime + 5);
+                        triggerGestureAnimation(seekRightOverlay);
+                    } else {
+                        video.currentTime = Math.max(0, video.currentTime - 5);
+                        triggerGestureAnimation(seekLeftOverlay);
+                    }
+                    e.preventDefault();
+                } else {
+                    longPressTimer = setTimeout(() => {
+                        video.playbackRate = 2.0;
+                        if (speedOverlay) speedOverlay.style.display = 'flex';
+                    }, 400);
+                }
+                lastTapTime = now;
+            }, {passive: false});
+
+            wrapper.addEventListener('touchend', () => {
+                clearTimeout(longPressTimer);
+                video.playbackRate = 1.0;
+                if (speedOverlay) speedOverlay.style.display = 'none';
+            });
+
+            function triggerGestureAnimation(element) {
+                if (!element) return;
+                element.style.display = 'flex';
+                element.classList.remove('animate-seek');
+                void element.offsetWidth;
+                element.classList.add('animate-seek');
+                setTimeout(() => { element.style.display = 'none'; }, 600);
+            }
+
+            video.addEventListener('play', () => {
+                if (playIcon) playIcon.textContent = 'pause';
+                if (centerIcon) centerIcon.textContent = 'pause';
+                player.classList.add('is-playing');
+            });
+
+            video.addEventListener('pause', () => {
+                if (playIcon) playIcon.textContent = 'play_arrow';
+                if (centerIcon) centerIcon.textContent = 'play_arrow';
+                player.classList.remove('is-playing');
+            });
+
+            video.addEventListener('timeupdate', () => {
+                if (video.duration) {
+                    const percent = (video.currentTime / video.duration) * 100;
+                    if (progressFill) progressFill.style.width = `${percent || 0}%`;
+                    if (timeDisplay) timeDisplay.textContent = `${formatTime(video.currentTime)} / ${formatTime(video.duration)}`;
+                }
+            });
+
+            let isVideoDragging = false;
+            function scrubVideo(e) {
+                const rect = progressBar.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const pos = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+                if (video.duration) {
+                    video.currentTime = pos * video.duration;
+                    progressFill.style.width = `${pos * 100}%`;
+                }
+            }
+
+            if (progressBar) {
+                progressBar.addEventListener('mousedown', (e) => { isVideoDragging = true; scrubVideo(e); });
+                window.addEventListener('mousemove', (e) => { if (isVideoDragging) scrubVideo(e); });
+                window.addEventListener('mouseup', () => { isVideoDragging = false; });
+                progressBar.addEventListener('touchstart', (e) => { isVideoDragging = true; scrubVideo(e); }, {passive: true});
+                window.addEventListener('touchmove', (e) => { if (isVideoDragging) scrubVideo(e); }, {passive: true});
+                window.addEventListener('touchend', () => { isVideoDragging = false; });
+            }
+
+            if (menuMuteBtn) {
+                menuMuteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (moreMenu) moreMenu.classList.remove('open');
+                    video.muted = !video.muted;
+                    menuMuteBtn.innerHTML = `<i class="material-icons-round">${video.muted ? 'volume_up' : 'volume_off'}</i> ${video.muted ? 'Включить звук' : 'Убрать звук'}`;
+                });
+            }
+
+            if (menuSpeedBtn) {
+                menuSpeedBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (moreMenu) moreMenu.classList.remove('open');
+                    openSelectorModal('Скорость воспроизведения', ['0.5x', '1x', '1.25x', '1.5x', '2x'], `${video.playbackRate}x`, (val) => {
+                        video.playbackRate = parseFloat(val);
+                    });
+                });
+            }
+
+            if (menuQualityBtn) {
+                menuQualityBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (moreMenu) moreMenu.classList.remove('open');
+                    openSelectorModal('Качество видео', ['Авто', '720p', '480p', '360p'], 'Авто', (val) => {});
+                });
+            }
+
+            if (moreBtn && moreMenu) {
+                moreBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    moreMenu.classList.toggle('open');
+                });
+            }
+
+            if (fsBtn) {
+                fsBtn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    if (!document.fullscreenElement) {
+                        if (player.requestFullscreen) await player.requestFullscreen();
+                    } else {
+                        if (document.exitFullscreen) await document.exitFullscreen();
+                    }
+                });
+            }
+
+            if (menuDownloadBtn) {
+                menuDownloadBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (moreMenu) moreMenu.classList.remove('open');
+                    if (!isLoaded) loadVideo();
+                    activeVideoForDownload = video.currentSrc || video.src || video.getAttribute('data-src');
+                    window.downloadVideoWatermark();
+                });
+            }
+
+            if (menuShareBtn) {
+                menuShareBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (moreMenu) moreMenu.classList.remove('open');
+                    const shareUrl = window.location.href;
+                    if (navigator.share) {
+                        navigator.share({ title: document.title, url: shareUrl }).catch(() => {});
+                    } else {
+                        navigator.clipboard.writeText(shareUrl).then(() => { alert('Ссылка скопирована!'); });
+                    }
+                });
+            }
+
+            player.addEventListener('mouseenter', loadVideo, { once: true });
+            player.addEventListener('touchstart', loadVideo, { once: true });
+        };
+
+        window.initCustomAudioPlayer = function(container) {
+            const player = container.querySelector('.custom-audio-player');
+            if (!player) return;
+            const audio = player.querySelector('audio');
+            const playBtn = player.querySelector('.play-btn');
+            const playIcon = playBtn.querySelector('.material-icons-round');
+            const progressBar = player.querySelector('.progress-bar');
+            const progressFill = player.querySelector('.progress-fill');
+            const timeDisplay = player.querySelector('.time-display');
+
+            const formatTime = (s) => { if (isNaN(s)) return "00:00"; const m = Math.floor(s/60), sec = Math.floor(s%60); return `${m<10?'0':''}${m}:${sec<10?'0':''}${sec}`; };
+            playBtn.addEventListener('click', () => { audio.paused ? audio.play() : audio.pause(); });
+            audio.addEventListener('play', () => { playIcon.textContent = 'pause'; });
+            audio.addEventListener('pause', () => { playIcon.textContent = 'play_arrow'; });
+            audio.addEventListener('timeupdate', () => {
+                const p = (audio.currentTime / audio.duration) * 100;
+                progressFill.style.width = `${p || 0}%`;
+                timeDisplay.textContent = `${formatTime(audio.currentTime)} / ${formatTime(audio.duration)}`;
+            });
+            audio.addEventListener('loadedmetadata', () => { timeDisplay.textContent = `00:00 / ${formatTime(audio.duration)}`; });
+
+            let isDragging = false;
+            function scrub(e) {
+                const rect = progressBar.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const pos = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+                if (audio.duration) {
+                    audio.currentTime = pos * audio.duration;
+                    progressFill.style.width = `${pos * 100}%`;
+                }
+            }
+
+            progressBar.addEventListener('mousedown', (e) => { isDragging = true; scrub(e); });
+            window.addEventListener('mousemove', (e) => { if (isDragging) scrub(e); });
+            window.addEventListener('mouseup', () => { isDragging = false; });
+            progressBar.addEventListener('touchstart', (e) => { isDragging = true; scrub(e); }, {passive: true});
+            window.addEventListener('touchmove', (e) => { if (isDragging) scrub(e); }, {passive: true});
+            window.addEventListener('touchend', () => { isDragging = false; });
+        };
+
+        let selectorCallback = null;
+        window.openSelectorModal = function(title, options, currentVal, callback) {
+            document.getElementById('selector-modal-title').textContent = title;
+            selectorCallback = callback;
+            const container = document.getElementById('selector-options-container');
+            let html = '';
+            options.forEach(opt => {
+                const isActive = opt === currentVal ? 'active' : '';
+                html += `<button class="selector-option-btn ${isActive}" type="button" onclick="selectOption('${opt}')">${opt}</button>`;
+            });
+            container.innerHTML = html;
+            document.getElementById('selector-modal').style.display = 'flex';
+        };
+
+        window.selectOption = function(val) {
+            document.querySelectorAll('.selector-option-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.textContent === val);
+            });
+        };
+
+        window.closeSelectorModal = function(apply = false) {
+            if (apply && selectorCallback) {
+                const activeBtn = document.querySelector('.selector-option-btn.active');
+                if (activeBtn) selectorCallback(activeBtn.textContent);
+            }
+            document.getElementById('selector-modal').style.display = 'none';
+            selectorCallback = null;
+        };
+
+        function showProgressUI(title) {
+            const container = document.getElementById('progress-bar-container');
+            const label = document.getElementById('progress-bar-label');
+            const percentText = document.getElementById('progress-bar-percent');
+            const fill = document.getElementById('progress-bar-fill');
+            label.textContent = title;
+            percentText.textContent = '0%';
+            fill.style.width = '0%';
+            container.style.display = 'block';
+            return (p) => {
+                const val = Math.min(100, Math.max(0, Math.round(p)));
+                percentText.textContent = `${val}%`;
+                fill.style.width = `${val}%`;
+            };
+        }
+        function hideProgressUI() {
+            setTimeout(() => { document.getElementById('progress-bar-container').style.display = 'none'; }, 1000);
+        }
+
+        window.downloadVideoWatermark = async function() {
+            if (!activeVideoForDownload) return;
+            const src = activeVideoForDownload;
+            const update = showProgressUI("Скачивание видео...");
+            try {
+                const tempVideo = document.createElement('video');
+                tempVideo.crossOrigin = "anonymous";
+                tempVideo.src = src;
+                tempVideo.muted = true;
+                tempVideo.preload = "auto";
+                await new Promise((resolve, reject) => {
+                    tempVideo.onloadeddata = resolve;
+                    tempVideo.onerror = reject;
+                });
+                const duration = tempVideo.duration || 1;
+                const canvas = document.createElement('canvas');
+                canvas.width = tempVideo.videoWidth || 1280;
+                canvas.height = tempVideo.videoHeight || 720;
+                const ctx = canvas.getContext('2d');
+                const stream = canvas.captureStream(30);
+                let mimeType = 'video/webm;codecs=vp9';
+                if (!MediaRecorder.isTypeSupported(mimeType)) mimeType = 'video/webm';
+                const mediaRecorder = new MediaRecorder(stream, { mimeType });
+                const chunks = [];
+                mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+                mediaRecorder.onstop = () => {
+                    update(100);
+                    const blob = new Blob(chunks, { type: 'video/webm' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'Orbit_video.webm';
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    hideProgressUI();
+                };
+                tempVideo.currentTime = 0;
+                await tempVideo.play();
+                mediaRecorder.start();
+                function drawFrame() {
+                    if (tempVideo.paused || tempVideo.ended) { mediaRecorder.stop(); return; }
+                    ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
+                    ctx.save();
+                    ctx.globalAlpha = 0.55;
+                    ctx.fillStyle = "#FFD000";
+                    const fontSize = Math.max(16, Math.round(canvas.height * 0.045));
+                    ctx.font = `bold ${fontSize}px 'Russo One', sans-serif`;
+                    ctx.shadowColor = "rgba(0,0,0,0.8)";
+                    ctx.shadowBlur = 6;
+                    ctx.fillText("@Orbit_1917", canvas.width - (fontSize * 9), canvas.height - (fontSize * 1.2));
+                    ctx.restore();
+                    update((tempVideo.currentTime / duration) * 100);
+                    requestAnimationFrame(drawFrame);
+                }
+                drawFrame();
+            } catch (err) {
+                const a = document.createElement('a');
+                a.href = src;
+                a.download = 'Orbit_video.mp4';
+                a.target = '_blank';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                hideProgressUI();
+            }
+        };
+
+        window.scrollToSection = function(sectionId) {
+            closeSidebar();
+            const el = document.getElementById(`section-${sectionId}`);
+            if (el) {
+                const headerOffset = 80;
+                const elementPosition = el.getBoundingClientRect().top;
+                const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
+                window.scrollTo({
+                    top: offsetPosition,
+                    behavior: "smooth"
+                });
+            }
+        };
+
+        async function loadAllSections() {
+            initAboutText();
+            initDynamicQuotes();
+
+            const sections = ['posts', 'photo', 'video', 'music', 'books'];
+            for (const sectionId of sections) {
+                await loadSectionData(sectionId);
+            }
+        }
+
+        async function loadSectionData(sectionId) {
+            const container = document.getElementById(`container-${sectionId}`);
+            if (!container) return;
+
+            try {
+                const q = query(collection(db, sectionId), orderBy("createdAt", "desc"));
+                const querySnapshot = await getDocs(q);
+                let docs = [];
+                querySnapshot.forEach((docSnap) => {
+                    docs.push({ id: docSnap.id, ...docSnap.data() });
+                });
+
+                sectionCache.set(sectionId, docs);
+                renderSectionCards(sectionId, docs);
+            } catch (err) {
+                console.warn(`Firestore permission/load info for ${sectionId}:`, err);
+                container.innerHTML = `<div class="card media-card-stable" style="grid-column: 1 / -1;"><p style="text-align:center; color:var(--poster-yellow);">Раздел "${sectionId.toUpperCase()}" обновляется или требует настройки правил Firestore.</p></div>`;
+            }
+        }
+
+        function renderSectionCards(sectionId, docs) {
+            const container = document.getElementById(`container-${sectionId}`);
+            if (!container) return;
+
+            if (!docs || docs.length === 0) {
+                container.innerHTML = `<div class="card media-card-stable" style="grid-column: 1 / -1;"><p style="text-align:center; color:#888;">В данном разделе пока нет публикаций.</p></div>`;
+                return;
+            }
+
+            let html = "";
+            docs.forEach((data) => {
+                const id = data.id;
+                registerView(sectionId, id);
+
+                const title = data.title || "[Без заголовка]";
+                const safeTitle = escapeHTML(title);
+                const mediaUrl = (data.mediaUrl || (data.mediaUrls && data.mediaUrls[0]) || "");
+                const safeMediaUrl = isValidURL(mediaUrl) ? escapeHTML(mediaUrl) : "";
+
+                const score = data.rating || 0;
+                const voteKey = `${sectionId}_${id}`;
+                const userVote = userVotes[voteKey] || 0;
+
+                let ratingScoreClass = "neutral";
+                let scoreText = "0";
+                if (score > 0) { ratingScoreClass = "positive"; scoreText = `+${score}`; }
+                else if (score < 0) { ratingScoreClass = "negative"; scoreText = `${score}`; }
+
+                let parsedContent = parseContent(data.text, data.mediaUrls, data.mediaUrl);
+
+                const ratingModuleHtml = `
+                    <div class="google-plus-rating">
+                        <button class="btn-vote btn-vote-plus ${userVote === 1 ? 'voted-plus' : ''}" onclick="handleVote('${id}', 1, '${sectionId}')" title="Поддержать (+1)">
+                            <i class="material-icons-round">add</i>
+                        </button>
+                        <span class="rating-score ${ratingScoreClass}">${scoreText}</span>
+                        <button class="btn-vote btn-vote-minus ${userVote === -1 ? 'voted-minus' : ''}" onclick="handleVote('${id}', -1, '${sectionId}')" title="Отрицательно (-1)">
+                            <i class="material-icons-round">remove</i>
+                        </button>
+                    </div>
+                `;
+
+                if (sectionId === "video") {
+                    html += `
+                        <div class="card media-card media-card-stable" data-id="${id}" data-score="${score}">
+                            <h3 class="media-title-center i18n-translatability" data-original="${safeTitle}">${safeTitle}</h3>
+                            <div class="scroll-content" style="width: 100%;">
+                                ${safeMediaUrl ? `
+                                    <div class="custom-video-player">
+                                        <div class="v-wrapper">
+                                            <video preload="metadata" playsinline webkit-playsinline data-src="${safeMediaUrl}"></video>
+                                            <div class="v-overlay">
+                                                <button class="v-play-center" type="button"><i class="material-icons-round">play_arrow</i></button>
+                                            </div>
+                                            <div class="v-gesture-speed"><i class="material-icons-round">fast_forward</i> 2X</div>
+                                            <div class="v-gesture-seek v-gesture-seek-left"><i class="material-icons-round">fast_rewind</i> <span>-5 сек</span></div>
+                                            <div class="v-gesture-seek v-gesture-seek-right"><i class="material-icons-round">fast_forward</i> <span>+5 сек</span></div>
+                                        </div>
+                                        <div class="v-controls">
+                                            <button class="v-btn v-play-btn" type="button"><i class="material-icons-round">play_arrow</i></button>
+                                            <div class="v-progress-bar"><div class="v-progress-fill"></div></div>
+                                            <span class="v-time-display">00:00 / 00:00</span>
+                                            <div style="position: relative;">
+                                                <button class="v-btn v-more-btn" type="button" title="Ещё"><i class="material-icons-round">more_vert</i></button>
+                                                <div class="v-more-menu">
+                                                    <button class="v-menu-item v-menu-mute" type="button"><i class="material-icons-round">volume_off</i> Убрать звук</button>
+                                                    <button class="v-menu-item v-menu-speed" type="button"><i class="material-icons-round">speed</i> Скорость</button>
+                                                    <button class="v-menu-item v-menu-quality" type="button"><i class="material-icons-round">high_quality</i> Качество</button>
+                                                    <button class="v-menu-item v-menu-download" type="button"><i class="material-icons-round">file_download</i> Скачать</button>
+                                                    <button class="v-menu-item v-menu-share" type="button"><i class="material-icons-round">share</i> Поделиться</button>
+                                                </div>
+                                            </div>
+                                            <button class="v-btn v-fs-btn" type="button" title="На весь экран"><i class="material-icons-round">fullscreen</i></button>
+                                        </div>
+                                    </div>
+                                ` : ''}
+                                ${parsedContent}
+                            </div>
+                            <div class="card-footer-bar">${ratingModuleHtml}</div>
+                        </div>`;
+                } else if (sectionId === "music") {
+                    html += `
+                        <div class="card media-card media-card-stable" data-id="${id}" data-score="${score}">
+                            <h3 class="media-title-center i18n-translatability" data-original="${safeTitle}">${safeTitle}</h3>
+                            <div class="scroll-content" style="width: 100%;">
+                                ${safeMediaUrl ? `
+                                    <div class="custom-audio-player">
+                                        <audio src="${safeMediaUrl}" preload="metadata"></audio>
+                                        <button class="play-btn" type="button"><i class="material-icons-round">play_arrow</i></button>
+                                        <div class="progress-bar"><div class="progress-fill"></div></div>
+                                        <span class="time-display">00:00 / 00:00</span>
+                                    </div>
+                                ` : ''}
+                                ${parsedContent}
+                            </div>
+                            <div class="card-footer-bar">${ratingModuleHtml}</div>
+                        </div>`;
+                } else {
+                    html += `
+                        <div class="card media-card-stable" data-id="${id}" data-score="${score}">
+                            <h3 class="i18n-translatability" data-original="${safeTitle}">${safeTitle}</h3>
+                            <div class="scroll-content">${parsedContent}</div>
+                            ${sectionId === "books" && safeMediaUrl ? `<a href="${safeMediaUrl}" target="_blank" class="btn i18n-translatability" style="margin-top:10px; display:inline-block;">Скачать книгу</a>` : ''}
+                            <div class="card-footer-bar">${ratingModuleHtml}</div>
+                        </div>`;
+                }
+            });
+
+            container.innerHTML = html;
+
+            if (sectionId === "music") {
+                container.querySelectorAll('.card').forEach(card => window.initCustomAudioPlayer(card));
+            } else if (sectionId === "video") {
+                container.querySelectorAll('.card').forEach(card => window.initCustomVideoPlayer(card));
+            }
+
+            if (currentLang !== 'ru') applyLanguage(currentLang);
+        }
+
+        window.registerView = async function(collectionName, docId) {
+            const key = `${collectionName}_${docId}`;
+            if (viewedPosts.has(key)) return;
+            viewedPosts.add(key);
+            try { await updateDoc(doc(db, collectionName, docId), { views: increment(1) }); } catch(e) {}
+        };
+
+        window.addEventListener('DOMContentLoaded', () => {
+            loadAllSections();
+            initCosmicBackground();
+        });
+
+        function initCosmicBackground() {
+            const canvas = document.getElementById('space-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d', { alpha: false });
+
+            let width = canvas.width = window.innerWidth;
+            let height = canvas.height = window.innerHeight;
+
+            window.addEventListener('resize', () => {
+                width = canvas.width = window.innerWidth;
+                height = canvas.height = window.innerHeight;
+            });
+
+            const stars = [];
+            const numStars = 70;
+            for (let i = 0; i < numStars; i++) {
+                stars.push({
+                    x: Math.random() * width,
+                    y: Math.random() * height,
+                    size: Math.random() * 2 + 1,
+                    alpha: Math.random(),
+                    speed: Math.random() * 0.01 + 0.003
+                });
+            }
+
+            function draw() {
+                ctx.fillStyle = '#0D0D11';
+                ctx.fillRect(0, 0, width, height);
+
+                stars.forEach(s => {
+                    s.alpha += s.speed;
+                    if (s.alpha > 1 || s.alpha < 0) s.speed = -s.speed;
+
+                    ctx.save();
+                    ctx.fillStyle = `rgba(255, 208, 0, ${Math.abs(s.alpha)})`;
+                    ctx.beginPath();
+                    ctx.arc(s.x, s.y, s.size, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                });
+
+                requestAnimationFrame(draw);
+            }
+
+            draw();
+        }
+    </script>
+
+    <style>
+        :root {
+            --bg-dark: #0D0D11;
+            --poster-yellow: #FFD000;
+            --poster-black: #111115;
+            --poster-red: #D61C1C;
+            --surface-card: rgba(18, 18, 24, 0.94);
+            --border-poster: #FFD000;
+            --text-main: #FFFFFF;
+            --text-muted: #A4A4B5;
+
+            --google-plus-green: #00E676;
+            --google-minus-red: #FF1744;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; outline: none; }
+        
+        html { scroll-behavior: smooth; }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: 'Montserrat', sans-serif;
+            line-height: 1.5;
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+
+        #space-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 0;
+            pointer-events: none;
+            will-change: transform;
+        }
+
+        /* Исправлен хединг, добавлены безопасные отступы, чтобы логотип и кнопка не сталкивались */
+        header.orbit-header {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 64px;
+            background: rgba(13, 13, 17, 0.95);
+            backdrop-filter: blur(8px);
+            border-bottom: 3px solid var(--poster-yellow);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 12px;
+            z-index: 1000;
+            box-shadow: 0 4px 20px rgba(255, 208, 0, 0.15);
+            gap: 10px;
+        }
+
+        .header-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex-shrink: 1; }
+
+        .icon-menu-btn {
+            background: var(--poster-yellow);
+            border: none;
+            color: var(--poster-black);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 38px;
+            height: 38px;
+            border-radius: 8px;
+            flex-shrink: 0;
+            transition: transform 0.15s, background 0.15s;
+        }
+        .icon-menu-btn:hover { transform: scale(1.05); background: #FFE033; }
+
+        .brand-logo { display: flex; align-items: center; gap: 8px; text-decoration: none; cursor: pointer; min-width: 0; }
+        .brand-logo-img { width: 32px; height: 32px; object-fit: contain; flex-shrink: 0; }
+
+        .brand-title {
+            font-family: 'Russo One', sans-serif;
+            font-size: 1.35rem;
+            color: var(--poster-yellow);
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            text-shadow: 2px 2px 0px #000;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .header-right { display: flex; align-items: center; flex-shrink: 0; }
+
+        .header-profile-btn {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background: var(--poster-red);
+            border: 2px solid var(--poster-yellow);
+            color: #ffffff;
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-family: 'Russo One', sans-serif;
+            font-size: 0.8rem;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            transition: background 0.2s, transform 0.15s;
+            white-space: nowrap;
+        }
+        .header-profile-btn:hover { background: #b01515; transform: scale(1.02); }
+
+        .sidebar-overlay {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(4px);
+            z-index: 1050; opacity: 0; pointer-events: none; transition: opacity 0.25s ease;
+        }
+        .sidebar-overlay.active { opacity: 1; pointer-events: auto; }
+
+        .sidebar {
+            position: fixed; top: 0; left: -320px; width: 300px; height: 100vh;
+            background: #111116; border-right: 4px solid var(--poster-yellow);
+            z-index: 1100; display: flex; flex-direction: column; transition: left 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        .sidebar.open { left: 0; }
+
+        .sidebar-header {
+            height: 70px; display: flex; align-items: center; padding: 0 20px;
+            border-bottom: 2px solid var(--border-poster); background: var(--poster-yellow);
+            color: var(--poster-black);
+        }
+        .sidebar-header .brand-title { color: var(--poster-black); text-shadow: none; }
+
+        .sidebar-menu-list { padding: 20px 12px; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex-grow: 1; }
+
+        .sidebar-nav-item {
+            display: flex; align-items: center; gap: 14px; padding: 12px 16px;
+            color: #FFFFFF; text-decoration: none; font-family: 'Russo One', sans-serif; font-size: 1rem;
+            border-radius: 6px; cursor: pointer; transition: all 0.2s ease; text-transform: uppercase;
+            letter-spacing: 0.5px; border: 1px solid transparent;
+        }
+        .sidebar-nav-item .material-icons-round { font-size: 22px; color: var(--poster-yellow); }
+        .sidebar-nav-item:hover { background: var(--poster-yellow); color: var(--poster-black); border-color: var(--poster-yellow); }
+        .sidebar-nav-item:hover .material-icons-round { color: var(--poster-black); }
+
+        .sidebar-divider { height: 2px; background: rgba(255, 208, 0, 0.3); margin: 12px 0; }
+
+        .lang-switch-box {
+            display: inline-flex;
+            align-items: center;
+            background: #181822;
+            border: 1px solid var(--poster-yellow);
+            border-radius: 20px;
+            padding: 3px;
+            position: relative;
+        }
+
+        .lang-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 6px 14px;
+            font-family: 'Russo One', sans-serif;
+            font-size: 0.85rem;
+            border-radius: 16px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .lang-btn.active {
+            background: var(--poster-yellow);
+            color: var(--poster-black);
+        }
+        .lang-more-btn {
+            background: #2A2A38;
+            color: #FFF;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 16px;
+            cursor: pointer;
+            font-family: 'Russo One', sans-serif;
+            font-size: 0.85rem;
+        }
+
+        /* Исправлено позиционирование выпадающего окна языков внутри меню, чтобы оно не уходило за границы */
+        .lang-modal {
+            display: none;
+            position: absolute;
+            top: 110%;
+            left: 0;
+            background: #111116;
+            border: 2px solid var(--poster-yellow);
+            border-radius: 12px;
+            padding: 10px;
+            z-index: 1200;
+            width: 100%;
+            max-height: 250px;
+            overflow-y: auto;
+            flex-direction: column;
+            gap: 6px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.9);
+        }
+        .lang-modal .lang-btn { width: 100%; text-align: center; background: #1A1A24; border: 1px solid #2D2D3E; }
+
+        .main-wrapper {
+            position: relative; z-index: 10; margin-top: 64px;
+            padding: 30px 20px 60px 20px; max-width: 1240px; margin-left: auto; margin-right: auto;
+        }
+
+        .quote-banner {
+            background: #181822;
+            border: 2px solid var(--poster-yellow); border-radius: 8px; padding: 18px 24px;
+            margin-bottom: 35px; text-align: center; font-style: italic; color: var(--poster-yellow); font-size: 1.05rem;
+        }
+
+        .section-block {
+            margin-bottom: 60px;
+            scroll-margin-top: 80px;
+        }
+
+        .section-header-row {
+            display: flex; align-items: center; justify-content: space-between; margin-bottom: 25px;
+        }
+
+        .section-title {
+            font-family: 'Russo One', sans-serif; font-size: 2.2rem;
+            color: var(--poster-yellow); text-transform: uppercase;
+            letter-spacing: 1px; text-shadow: 3px 3px 0px #000;
+            background: var(--poster-black); padding: 6px 18px;
+            border: 2px solid var(--poster-yellow); display: inline-block;
+        }
+
+        .about-box {
+            background: var(--surface-card); border: 2px solid var(--poster-yellow);
+            border-radius: 8px; padding: 35px;
+        }
+        .about-box p { font-size: 1.15rem; color: #E0E0EC; margin-bottom: 20px; line-height: 1.7; white-space: pre-wrap; }
+
+        .grid-display {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 25px; align-items: start;
+        }
+
+        .card {
+            background: var(--surface-card); border: 2px solid #2D2D40;
+            border-top: 4px solid var(--poster-yellow); border-radius: 8px; padding: 22px;
+            display: flex; flex-direction: column; position: relative; transition: border-color 0.2s;
+        }
+        .card:hover { border-color: var(--poster-yellow); }
+        .card h3 { font-family: 'Russo One', sans-serif; font-size: 1.25rem; text-transform: uppercase; margin-bottom: 12px; color: var(--poster-yellow); word-break: break-word; }
+
+        .scroll-content { max-height: 400px; overflow-y: auto; flex-grow: 1; padding-right: 6px; margin-bottom: 15px; }
+        .word-text { font-size: 1.05rem; color: #E2E2EC; white-space: pre-wrap; line-height: 1.6; }
+        .inline-post-img { width: 100%; max-height: 280px; object-fit: contain; background: #000; border: 1px solid #2D2D40; border-radius: 6px; margin: 10px 0; }
+
+        .card-footer-bar { display: flex; align-items: center; justify-content: flex-end; border-top: 1px solid #2D2D40; padding-top: 14px; margin-top: auto; }
+        .google-plus-rating { display: flex; align-items: center; background: #08080C; border: 1px solid #2D2D40; border-radius: 20px; padding: 3px 6px; gap: 8px; }
+        .btn-vote { background: transparent; border: none; color: var(--text-muted); width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        .btn-vote-plus.voted-plus { background: var(--google-plus-green); color: #000; }
+        .btn-vote-minus.voted-minus { background: var(--google-minus-red); color: #fff; }
+        .rating-score { font-family: 'Russo One', sans-serif; font-size: 1rem; min-width: 28px; text-align: center; }
+        .rating-score.positive { color: var(--google-plus-green); }
+        .rating-score.negative { color: var(--google-minus-red); }
+        .rating-score.neutral { color: var(--poster-yellow); }
+
+        /* Видеоплеер */
+        .custom-video-player {
+            width: 100%; background: #000; border: 2px solid var(--poster-yellow);
+            border-radius: 10px; margin-bottom: 15px; display: flex; flex-direction: column;
+            position: relative; transform: translateZ(0); user-select: none;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.5); overflow: hidden;
+        }
+
+        .custom-video-player:fullscreen {
+            width: 100vw !important; height: 100vh !important; border: none; background: #000; border-radius: 0;
+        }
+
+        .v-wrapper {
+            position: relative; width: 100%; padding-top: 56.25%; background-color: #000; overflow: hidden; cursor: pointer;
+        }
+
+        .v-wrapper video {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; background: #000;
+        }
+
+        .v-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.35);
+            display: flex; align-items: center; justify-content: center; z-index: 4; transition: opacity 0.25s ease;
+        }
+
+        .custom-video-player.is-playing .v-overlay { opacity: 0; pointer-events: none; }
+
+        .v-play-center {
+            background: var(--poster-yellow); border: none; color: #000; width: 64px; height: 64px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center; cursor: pointer;
+            box-shadow: 0 4px 15px rgba(255, 208, 0, 0.4); transition: transform 0.2s, background 0.2s;
+        }
+        .v-play-center:hover { transform: scale(1.1); background: #ffe033; }
+        .v-play-center .material-icons-round { font-size: 38px; }
+
+        .v-gesture-speed {
+            display: none; position: absolute; top: 15px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.85); border: 1px solid var(--poster-yellow); color: #fff;
+            padding: 6px 16px; border-radius: 20px; font-family: 'Russo One', sans-serif; font-size: 0.9rem; z-index: 10;
+        }
+
+        .v-gesture-seek {
+            display: none; position: absolute; top: 0; width: 40%; height: 100%;
+            background: rgba(255, 208, 0, 0.15); color: #fff; flex-direction: column; align-items: center;
+            justify-content: center; z-index: 9; font-family: 'Russo One', sans-serif; font-size: 0.85rem;
+        }
+
+        .v-gesture-seek-left { left: 0; }
+        .v-gesture-seek-right { right: 0; }
+        .animate-seek { animation: seekPulse 0.5s ease-out; }
+        @keyframes seekPulse { 0% { opacity: 0; } 50% { opacity: 1; } 100% { opacity: 0; } }
+
+        .v-controls {
+            display: flex; align-items: center; gap: 10px; background: #14141a; padding: 10px 14px; border-top: 1px solid #282836; z-index: 6;
+        }
+
+        .v-btn {
+            background: transparent; border: none; color: #fff; width: 34px; height: 34px; border-radius: 6px;
+            display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0;
+            transition: background 0.15s, color 0.15s;
+        }
+        .v-btn:hover { background: rgba(255, 208, 0, 0.15); color: var(--poster-yellow); }
+
+        .v-play-btn {
+            background: var(--poster-yellow); color: #000; width: 36px; height: 36px; border-radius: 50%;
+        }
+        .v-play-btn:hover { background: #ffe033; color: #000; }
+
+        .v-progress-bar { flex-grow: 1; height: 8px; background: #262633; border-radius: 4px; cursor: pointer; position: relative; overflow: hidden; }
+        .v-progress-fill { height: 100%; background: var(--poster-yellow); width: 0%; border-radius: 4px; position: relative; }
+        .v-time-display { font-size: 0.78rem; font-weight: 600; color: var(--text-muted); min-width: 90px; text-align: center; }
+
+        .v-more-menu {
+            display: none; position: absolute; bottom: 100%; right: 0; background: #181822; border: 1px solid var(--poster-yellow);
+            margin-bottom: 8px; z-index: 20; flex-direction: column; min-width: 180px; box-shadow: 0px 8px 20px rgba(0,0,0,0.9); border-radius: 6px; overflow: hidden;
+        }
+        .v-more-menu.open { display: flex; }
+        .v-menu-item {
+            background: transparent; border: none; color: #ffffff; padding: 11px 16px; display: flex; align-items: center;
+            gap: 12px; font-family: 'Montserrat', sans-serif; font-size: 0.85rem; font-weight: 600; cursor: pointer; text-align: left;
+            transition: background 0.15s, color 0.15s;
+        }
+        .v-menu-item:hover { background: var(--poster-yellow); color: #000; }
+
+        /* Аудиоплеер */
+        .custom-audio-player { display: flex; align-items: center; gap: 12px; background: #14141a; border: 1px solid #282836; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; width: 100%; }
+        .custom-audio-player audio { display: none; }
+        .custom-audio-player .play-btn { background: var(--poster-yellow); border: none; color: #000; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        .custom-audio-player .progress-bar { flex-grow: 1; height: 8px; background: #262633; border-radius: 4px; cursor: pointer; position: relative; overflow: hidden; }
+        .custom-audio-player .progress-fill { height: 100%; background: var(--poster-yellow); width: 0%; border-radius: 4px; }
+        .custom-audio-player .time-display { font-size: 0.78rem; font-weight: 600; color: var(--text-muted); min-width: 90px; text-align: center; }
+
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.85); z-index: 2000; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(4px); }
+        .modal-card { background: #181822; border: 2px solid var(--poster-yellow); padding: 25px; max-width: 420px; width: 100%; text-align: center; border-radius: 8px; position: relative; }
+        .modal-card h4 { font-family: 'Russo One', sans-serif; color: var(--poster-yellow); font-size: 1.2rem; text-transform: uppercase; margin-bottom: 15px; }
+
+        .selector-options-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 20px; }
+        .selector-option-btn { background: #111116; border: 1px solid #2D2D40; color: #fff; padding: 10px; font-family: 'Russo One', sans-serif; cursor: pointer; }
+        .selector-option-btn.active, .selector-option-btn:hover { background: var(--poster-yellow); color: #000; border-color: var(--poster-yellow); }
+
+        .auth-input-group { margin-bottom: 15px; text-align: left; }
+        .auth-input-group label { display: block; font-family: 'Russo One', sans-serif; font-size: 0.8rem; color: var(--poster-yellow); margin-bottom: 5px; text-transform: uppercase; }
+        .auth-input { width: 100%; background: #111116; border: 1px solid #2D2D40; padding: 10px 14px; color: #fff; border-radius: 4px; font-family: 'Montserrat', sans-serif; font-size: 0.95rem; }
+        .auth-input:focus { border-color: var(--poster-yellow); }
+
+        .auth-divider { display: flex; align-items: center; margin: 20px 0; color: var(--text-muted); font-size: 0.8rem; font-family: 'Russo One', sans-serif; }
+        .auth-divider::before, .auth-divider::after { content: ''; flex: 1; height: 1px; background: #2D2D40; }
+        .auth-divider span { padding: 0 10px; }
+
+        .social-auth-btn { width: 100%; padding: 10px; border-radius: 4px; font-family: 'Russo One', sans-serif; font-size: 0.85rem; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 10px; transition: opacity 0.2s; }
+        .social-auth-btn:hover { opacity: 0.9; }
+        .btn-google { background: #ffffff; color: #000; }
+        .btn-apple { background: #000000; color: #fff; border: 1px solid #333; }
+
+        .auth-toggle-box { margin-top: 15px; font-size: 0.85rem; color: var(--text-muted); }
+        .auth-toggle-box button { background: none; border: none; color: var(--poster-yellow); font-family: 'Russo One', sans-serif; cursor: pointer; text-decoration: underline; margin-left: 5px; }
+
+        .btn { display: inline-block; padding: 10px 20px; background: var(--poster-yellow); color: #000; text-decoration: none; text-transform: uppercase; font-family: 'Russo One', sans-serif; font-size: 0.85rem; border-radius: 4px; border: none; cursor: pointer; width: 100%; text-align: center; }
+        .btn-secondary { background: #2A2A38; color: #FFF; }
+
+        .footer-links-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 12px;
+            max-width: 900px;
+            margin: 0 auto 20px auto;
+            text-align: left;
+        }
+
+        .footer-link-card {
+            background: #181822;
+            border: 1px solid #2D2D40;
+            padding: 10px 14px;
+            border-radius: 6px;
+            text-decoration: none;
+            color: #FFFFFF;
+            font-family: 'Montserrat', sans-serif;
+            font-size: 0.85rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            transition: border-color 0.2s, background 0.2s;
+        }
+        .footer-link-card:hover {
+            border-color: var(--poster-yellow);
+            background: #20202D;
+            color: var(--poster-yellow);
+        }
+        .footer-link-card .material-icons-round { font-size: 18px; color: var(--poster-yellow); }
+
+        /* Футер без лишней текстовой плашки */
+        footer {
+            background: #111116; border-top: 3px solid var(--poster-red); padding: 35px 20px; text-align: center; position: relative; z-index: 10;
+        }
+
+        @media (max-width: 768px) {
+            .main-wrapper { padding: 20px 12px 40px 12px; }
+            .grid-display { grid-template-columns: 1fr; }
+            .about-box { padding: 20px; }
+            .section-title { font-size: 1.6rem; }
+            .footer-links-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="space-canvas"></canvas>
+
+<!-- Хедер -->
+<header class="orbit-header">
+    <div class="header-left">
+        <button class="icon-menu-btn" onclick="toggleSidebar()" title="Меню сайта">
+            <i class="material-icons-round">menu</i>
+        </button>
+        <div class="brand-logo" onclick="window.scrollTo({top: 0, behavior: 'smooth'})">
+            <img class="brand-logo-img" src="https://i.ibb.co/sdwwQJcF/IMG-20261102-232112-037.png" alt="Логотип">
+            <span class="brand-title">ОРБИТА</span>
+        </div>
+    </div>
+
+    <div class="header-right">
+        <button class="header-profile-btn" onclick="openAuthModal()">
+            <i class="material-icons-round">account_circle</i>
+            <span id="header-profile-text">Войти</span>
+        </button>
+    </div>
+</header>
+
+<!-- Выдвижное меню -->
+<div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
+
+<aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <div class="brand-logo" onclick="closeSidebar()">
+            <img class="brand-logo-img" src="https://i.ibb.co/sdwwQJcF/IMG-20261102-232112-037.png" alt="Логотип">
+            <span class="brand-title">МЕНЮ САЙТА</span>
+        </div>
+    </div>
+    <div class="sidebar-menu-list">
+        <a class="sidebar-nav-item" onclick="scrollToSection('about')">
+            <i class="material-icons-round">info</i>
+            <span>О нас</span>
+        </a>
+        <a class="sidebar-nav-item" onclick="scrollToSection('posts')">
+            <i class="material-icons-round">article</i>
+            <span>Посты</span>
+        </a>
+        <a class="sidebar-nav-item" onclick="scrollToSection('photo')">
+            <i class="material-icons-round">photo_library</i>
+            <span>Фотогалерея</span>
+        </a>
+        <a class="sidebar-nav-item" onclick="scrollToSection('video')">
+            <i class="material-icons-round">play_circle_filled</i>
+            <span>Видеоархив</span>
+        </a>
+        <a class="sidebar-nav-item" onclick="scrollToSection('music')">
+            <i class="material-icons-round">audiotrack</i>
+            <span>Музыка</span>
+        </a>
+        <a class="sidebar-nav-item" onclick="scrollToSection('books')">
+            <i class="material-icons-round">menu_book</i>
+            <span>Библиотека</span>
+        </a>
+
+        <div class="sidebar-divider"></div>
+
+        <div style="padding: 10px 12px; position: relative;">
+            <div style="font-family:'Russo One', sans-serif; font-size: 0.85rem; color: #FFF; margin-bottom: 8px;">Язык интерфейса:</div>
+            <div class="lang-switch-box">
+                <button class="lang-btn active" data-lang="ru" onclick="switchLanguage('ru')">RU</button>
+                <button class="lang-btn" data-lang="en" onclick="switchLanguage('en')">EN</button>
+                <button class="lang-more-btn" onclick="toggleLangModal()">+ Ещё</button>
+
+                <div class="lang-modal" id="lang-modal">
+                    <button class="lang-btn" data-lang="de" onclick="switchLanguage('de')">DE</button>
+                    <button class="lang-btn" data-lang="fr" onclick="switchLanguage('fr')">FR</button>
+                    <button class="lang-btn" data-lang="es" onclick="switchLanguage('es')">ES</button>
+                    <button class="lang-btn" data-lang="uk" onclick="switchLanguage('uk')">UK</button>
+                    <button class="lang-btn" data-lang="be" onclick="switchLanguage('be')">BE</button>
+                    <button class="lang-btn" data-lang="kk" onclick="switchLanguage('kk')">KK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</aside>
+
+<!-- Основной контент -->
+<main class="main-wrapper">
+
+    <!-- Цитата дня -->
+    <div class="quote-banner i18n-translatability" id="quote-container">
+        «Загрузка космической цитаты...»
+    </div>
+
+    <!-- Перевод Прогресс -->
+    <div id="progress-bar-container" style="display:none; background:#181822; border:2px solid var(--poster-yellow); border-radius:8px; padding:12px 18px; margin-bottom:25px;">
+        <div style="display:flex; justify-content:space-between; font-family:'Russo One', sans-serif; font-size:0.85rem; color:var(--poster-yellow); margin-bottom:6px;">
+            <span id="progress-bar-label">Перевод...</span>
+            <span id="progress-bar-percent">0%</span>
+        </div>
+        <div style="width:100%; height:6px; background:#2A2A38; border-radius:3px; overflow:hidden;">
+            <div id="progress-bar-fill" style="height:100%; width:0%; background:var(--poster-yellow);"></div>
+        </div>
+    </div>
+
+    <!-- Секция: О нас -->
+    <section id="section-about" class="section-block" data-section="about">
+        <div class="section-header-row">
+            <h2 class="section-title">О НАС</h2>
+        </div>
+        <div id="about-container" class="about-box">
+            <p class="i18n-translatability" data-original="Информация пока не добавлена. Скоро здесь появится текст из админ-панели.">Информация пока не добавлена. Скоро здесь появится текст из админ-панели.</p>
+        </div>
+    </section>
+
+    <!-- Секция: Посты -->
+    <section id="section-posts" class="section-block" data-section="posts">
+        <div class="section-header-row">
+            <h2 class="section-title">ПОСТЫ</h2>
+        </div>
+        <div id="container-posts" class="grid-display">
+            <div class="card media-card-stable"><p style="text-align:center; color:#888;">Загрузка постов...</p></div>
+        </div>
+    </section>
+
+    <!-- Секция: Фотогалерея -->
+    <section id="section-photo" class="section-block" data-section="photo">
+        <div class="section-header-row">
+            <h2 class="section-title">ФОТОГАЛЕРЕЯ</h2>
+        </div>
+        <div id="container-photo" class="grid-display">
+            <div class="card media-card-stable"><p style="text-align:center; color:#888;">Загрузка фотографий...</p></div>
+        </div>
+    </section>
+
+    <!-- Секция: Видеоархив -->
+    <section id="section-video" class="section-block" data-section="video">
+        <div class="section-header-row">
+            <h2 class="section-title">ВИДЕОАРХИВ</h2>
+        </div>
+        <div id="container-video" class="grid-display">
+            <div class="card media-card-stable"><p style="text-align:center; color:#888;">Загрузка видео...</p></div>
+        </div>
+    </section>
+
+    <!-- Секция: Музыка -->
+    <section id="section-music" class="section-block" data-section="music">
+        <div class="section-header-row">
+            <h2 class="section-title">МУЗЫКАЛЬНЫЙ АРХИВ</h2>
+        </div>
+        <div id="container-music" class="grid-display">
+            <div class="card media-card-stable"><p style="text-align:center; color:#888;">Загрузка музыки...</p></div>
+        </div>
+    </section>
+
+    <!-- Секция: Библиотека -->
+    <section id="section-books" class="section-block" data-section="books">
+        <div class="section-header-row">
+            <h2 class="section-title">БИБЛИОТЕКА</h2>
+        </div>
+        <div id="container-books" class="grid-display">
+            <div class="card media-card-stable"><p style="text-align:center; color:#888;">Загрузка библиотеки...</p></div>
+        </div>
+    </section>
+
+</main>
+
+<!-- Модальное окно Входа / Регистрации -->
+<div class="modal-overlay" id="auth-modal">
+    <div class="modal-card">
+        <button onclick="closeAuthModal()" style="position: absolute; top: 12px; right: 12px; background: none; border: none; color: var(--text-muted); cursor: pointer;"><i class="material-icons-round">close</i></button>
+        <h4 id="auth-modal-title">Регистрация</h4>
+        
+        <form onsubmit="handleEmailAuth(event)">
+            <div class="auth-input-group">
+                <label for="auth-email">Электронная почта</label>
+                <input type="email" id="auth-email" class="auth-input" placeholder="example@orbit.org" required>
+            </div>
+            <div class="auth-input-group">
+                <label for="auth-password">Пароль</label>
+                <input type="password" id="auth-password" class="auth-input" placeholder="••••••••" required>
+            </div>
+            <button type="submit" id="auth-submit-btn" class="btn">Зарегистрироваться</button>
+        </form>
+
+        <div class="auth-divider">
+            <span>ИЛИ</span>
+        </div>
+
+        <button type="button" class="social-auth-btn btn-google" onclick="handleGoogleAuth()">
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" width="18" height="18" alt="Google">
+            Продолжить через Google
+        </button>
+
+        <button type="button" class="social-auth-btn btn-apple" onclick="handleAppleAuth()">
+            <i class="material-icons-round" style="font-size:20px;">apple</i>
+            Продолжить через Apple
+        </button>
+
+        <div class="auth-toggle-box">
+            <span id="auth-toggle-text">Уже есть аккаунт?</span>
+            <button type="button" id="auth-toggle-link" onclick="toggleAuthMode()">Войти</button>
+        </div>
+    </div>
+</div>
+
+<!-- Модальное окно качества / скорости -->
+<div class="modal-overlay" id="selector-modal">
+    <div class="modal-card">
+        <h4 id="selector-modal-title">Параметр</h4>
+        <div class="selector-options-grid" id="selector-options-container"></div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+            <button class="btn" onclick="closeSelectorModal(true)">Готово</button>
+            <button class="btn btn-secondary" onclick="closeSelectorModal(false)">Отмена</button>
+        </div>
+    </div>
+</div>
+
+<!-- Подвал -->
+<footer>
+    <h3 style="font-family:'Russo One', sans-serif; color:var(--poster-yellow); font-size:1.3rem; margin-bottom:15px; text-transform:uppercase;">
+        Официальные ресурсы Орбиты
+    </h3>
+
+    <div class="footer-links-grid">
+        <a href="https://t.me/Literature_82636" target="_blank" class="footer-link-card" rel="noopener noreferrer">
+            <span>Библиотека</span>
+            <i class="material-icons-round">open_in_new</i>
+        </a>
+        <a href="https://t.me/SovComverdictBot" target="_blank" class="footer-link-card" rel="noopener noreferrer">
+            <span>Бот Вердикт</span>
+            <i class="material-icons-round">open_in_new</i>
+        </a>
+        <a href="https://boosty.to/verdict1917" target="_blank" class="footer-link-card" rel="noopener noreferrer">
+            <span>Boosty</span>
+            <i class="material-icons-round">open_in_new</i>
+        </a>
+        <a href="https://t.me/socialist_realism" target="_blank" class="footer-link-card" rel="noopener noreferrer">
+            <span>Соцреализм</span>
+            <i class="material-icons-round">open_in_new</i>
+        </a>
+        <a href="https://t.me/boost/Orbit_1917" target="_blank" class="footer-link-card" rel="noopener noreferrer">
+            <span>Проголосовать за канал</span>
+            <i class="material-icons-round">open_in_new</i>
+        </a>
+        <a href="https://t.me/Orbit_1917" target="_blank" class="footer-link-card" rel="noopener noreferrer">
+            <span>Основной Telegram</span>
+            <i class="material-icons-round">open_in_new</i>
+        </a>
+        <a href="http://t.me/LetsAskBot?start=OXprMu" target="_blank" class="footer-link-card" rel="noopener noreferrer">
+            <span>Связь с владельцем</span>
+            <i class="material-icons-round">open_in_new</i>
+        </a>
+        <a href="https://www.tiktok.com/@orbit_1917?_r=1&_t=ZS-9BDF0hcCMNB" target="_blank" class="footer-link-card" rel="noopener noreferrer">
+            <span>TikTok</span>
+            <i class="material-icons-round">open_in_new</i>
+        </a>
+        <a href="https://t.me/+a04FVCMgyS1kMWNi" target="_blank" class="footer-link-card" rel="noopener noreferrer">
+            <span>Основной чат</span>
+            <i class="material-icons-round">open_in_new</i>
+        </a>
+        <a href="https://t.me/orbit1917" target="_blank" class="footer-link-card" rel="noopener noreferrer">
+            <span>Переходник</span>
+            <i class="material-icons-round">open_in_new</i>
+        </a>
+        <a href="https://telegra.ph/PROGRAMMA-MLPR-11-07" target="_blank" class="footer-link-card" rel="noopener noreferrer">
+            <span>Программа МЛПР</span>
+            <i class="material-icons-round">open_in_new</i>
+        </a>
+        <a href="https://t.me/+3duTW6pB01wyYTky" target="_blank" class="footer-link-card" rel="noopener noreferrer">
+            <span>Вступить к нам</span>
+            <i class="material-icons-round">open_in_new</i>
+        </a>
+    </div>
+
+    <div style="color: var(--poster-yellow); font-family: 'Russo One', sans-serif; font-size: 0.85rem; letter-spacing: 1px; margin-top: 15px;">
+        &copy; 2026 ORBIT PLATFORM. ВСЕ ПРАВА ЗАЩИЩЕНЫ.
+    </div>
+</footer>
+
+</body>
+</html>
