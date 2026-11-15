@@ -282,6 +282,8 @@
                 if (docSnap.exists()) {
                     const data = docSnap.data();
                     renderPostPage(collectionName, docId, data);
+                    // Убираем ?id= из адресной строки после отрисовки
+                    window.history.replaceState({}, document.title, window.location.pathname);
                 } else {
                     postPage.innerHTML = `<div style="text-align:center; padding: 50px; color: #ff5555;">Пост не найден.</div>`;
                 }
@@ -291,10 +293,8 @@
         };
 
         window.closePostPage = function() {
-            const url = new URL(window.location);
-            url.searchParams.delete('id');
-            url.searchParams.delete('collection');
-            window.history.pushState({}, '', url);
+            // Возвращаем URL без параметров
+            window.history.pushState({}, document.title, window.location.pathname);
             
             document.getElementById('post-page').style.display = 'none';
             document.querySelector('.main-wrapper').style.display = 'block';
@@ -385,7 +385,7 @@
                                 <button class="btn-vote btn-vote-minus ${userVote === -1 ? 'voted-minus' : ''}" onclick="handleVote('${docId}', -1, '${collectionName}', 'post')" title="Отрицательно (-1)"><i class="material-icons-round">remove</i></button>
                             </div>
                             
-                            <button class="share-btn" onclick="sharePost('${safeTitle}', '${window.location.href}')">
+                            <button class="share-btn" onclick="sharePost('${safeTitle}', '${window.location.origin}${window.location.pathname}?id=${docId}&collection=${collectionName}')">
                                 <i class="material-icons-round">share</i> Поделиться
                             </button>
                         </div>
@@ -410,10 +410,14 @@
         }
 
         window.sharePost = function(title, url) {
+            // Для копирования используем чистый URL без параметров, но с id для соцсетей
+            // (если хотим, чтобы пост открывался, нужно оставить ?id=)
+            // Здесь мы копируем чистый текст с заголовком и ссылкой
+            const cleanText = `«${title}» — ОРБИТА\n${url}`;
             if (navigator.share) {
-                navigator.share({ title: title, url: url }).catch(() => {});
+                navigator.share({ title: title, text: cleanText, url: url }).catch(() => {});
             } else {
-                navigator.clipboard.writeText(url).then(() => alert('Ссылка скопирована!'));
+                navigator.clipboard.writeText(cleanText).then(() => alert('Ссылка и текст скопированы!'));
             }
         };
 
@@ -487,14 +491,12 @@
             let currentScore = 0;
 
             if (context === 'post') {
-                // Голосование на странице поста
                 const ratingContainer = document.getElementById(`post-rating-${postId}`);
                 if (!ratingContainer) return;
                 plusBtn = ratingContainer.querySelector('.btn-vote-plus');
                 minusBtn = ratingContainer.querySelector('.btn-vote-minus');
                 ratingDisplay = ratingContainer.querySelector('.rating-score');
                 currentScore = parseInt(ratingDisplay.textContent.replace('+', '')) || 0;
-                // Синхронизируем с карточкой на главной, если она есть
                 card = document.querySelector(`.section-block[data-section="${sectionId}"] .card[data-id="${postId}"]`);
                 if (card) {
                     card.setAttribute('data-score', currentScore);
@@ -506,7 +508,6 @@
                     if (mainRating) { mainRating.textContent = ratingDisplay.textContent; mainRating.className = ratingDisplay.className; }
                 }
             } else {
-                // Голосование на карточке главной
                 card = document.querySelector(`.section-block[data-section="${sectionId}"] .card[data-id="${postId}"]`);
                 if (!card) return;
                 plusBtn = card.querySelector('.btn-vote-plus');
@@ -529,7 +530,6 @@
             }
             const newScore = currentScore + delta;
             
-            // Обновляем карточку (если есть)
             if (card) {
                 card.setAttribute('data-score', newScore);
                 const mainRating = card.querySelector('.rating-score');
@@ -545,7 +545,6 @@
                 if (mainMinus) mainMinus.classList.toggle('voted-minus', newVote === -1);
             }
 
-            // Обновляем страницу поста (если открыта)
             const postRatingContainer = document.getElementById(`post-rating-${postId}`);
             if (postRatingContainer) {
                 const postRating = postRatingContainer.querySelector('.rating-score');
@@ -979,7 +978,7 @@
                             <span class="rating-score ${ratingScoreClass}">${scoreText}</span>
                             <button class="btn-vote btn-vote-minus ${userVote === -1 ? 'voted-minus' : ''}" onclick="event.stopPropagation(); handleVote('${id}', -1, '${sectionId}', 'card')" title="Отрицательно (-1)"><i class="material-icons-round">remove</i></button>
                         </div>
-                        <button class="share-btn-small" onclick="event.stopPropagation(); sharePost('${safeTitle}', window.location.origin + window.location.pathname + '?id=${id}&collection=${sectionId}')" title="Поделиться">
+                        <button class="share-btn-small" onclick="event.stopPropagation(); sharePost('${safeTitle}', '${window.location.origin}${window.location.pathname}?id=${id}&collection=${sectionId}')" title="Поделиться">
                             <i class="material-icons-round">share</i>
                         </button>
                     </div>`;
@@ -1171,6 +1170,31 @@
         }
         #space-canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none; will-change: transform; }
         
+        /* Анимации появления */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        @keyframes slideInRight {
+            from { opacity: 0; transform: translateX(30px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .card { animation: fadeInUp 0.4s ease-out forwards; }
+        .post-page-card { animation: fadeInUp 0.4s ease-out forwards; }
+        .back-btn { animation: fadeIn 0.3s ease-out; }
+        .share-btn:active, .btn-vote:active { animation: pulse 0.2s ease-out; }
+        .modal-card { animation: fadeInUp 0.3s ease-out; }
+
         header.orbit-header {
             position: fixed; top: 0; left: 0; width: 100%; height: 64px;
             background: rgba(10, 10, 12, 0.85); backdrop-filter: blur(12px);
@@ -1225,7 +1249,7 @@
             cursor: pointer; transition: all 0.2s ease; letter-spacing: 0.5px;
         }
         .sidebar-nav-item .material-icons-round { font-size: 20px; color: var(--text-muted); transition: color 0.2s; }
-        .sidebar-nav-item:hover { background: rgba(255, 208, 0, 0.1); color: var(--poster-yellow); }
+        .sidebar-nav-item:hover { background: rgba(255, 208, 0, 0.1); color: var(--poster-yellow); transform: translateX(4px); }
         .sidebar-nav-item:hover .material-icons-round { color: var(--poster-yellow); }
         .sidebar-divider { height: 1px; background: #222; margin: 12px 0; }
         .lang-switch-box { display: inline-flex; align-items: center; background: #18181c; border: 1px solid #333; border-radius: 20px; padding: 3px; position: relative; }
@@ -1261,7 +1285,7 @@
         .nav-tab-btn:hover { color: var(--poster-yellow); background: rgba(255, 208, 0, 0.05); }
         .nav-tab-btn.active { color: var(--poster-yellow); border-bottom: 2px solid var(--poster-yellow); border-radius: 6px 6px 0 0; background: rgba(255, 208, 0, 0.05); }
 
-        .main-section { display: none; }
+        .main-section { display: none; animation: fadeIn 0.3s ease-out; }
         .section-block { margin-bottom: 60px; scroll-margin-top: 80px; }
         .section-header-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 25px; flex-wrap: wrap; gap: 15px; }
         .section-title {
@@ -1307,7 +1331,7 @@
             text-decoration: none;
             color: inherit;
         }
-        .card:hover { border-color: #444; transform: translateY(-2px); }
+        .card:hover { border-color: #444; transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.4); }
         
         .card.highlighted {
             border-color: var(--poster-yellow) !important;
@@ -1440,7 +1464,6 @@
         
         footer { background: #050505; border-top: 1px solid #222; padding: 40px 20px; text-align: center; position: relative; z-index: 10; }
 
-        /* Страница поста */
         #post-page {
             display: none; position: relative; z-index: 10;
             margin-top: 64px; padding: 40px 20px 60px 20px;
@@ -1580,7 +1603,6 @@
         </div>
     </section>
 
-    <!-- Секция: Посты -->
     <section id="section-posts" class="main-section section-block" data-section="posts">
         <div class="section-header-row">
             <h2 class="section-title">ПОСТЫ</h2>
@@ -1599,7 +1621,6 @@
         </div>
     </section>
 
-    <!-- Секция: Статьи -->
     <section id="section-articles" class="main-section section-block" data-section="articles">
         <div class="section-header-row">
             <h2 class="section-title">СТАТЬИ</h2>
@@ -1618,7 +1639,6 @@
         </div>
     </section>
 
-    <!-- Секция: Фотогалерея -->
     <section id="section-photo" class="main-section section-block" data-section="photo">
         <div class="section-header-row"><h2 class="section-title">ФОТОГАЛЕРЕЯ</h2></div>
         <div class="search-row">
@@ -1635,7 +1655,6 @@
         </div>
     </section>
 
-    <!-- Секция: Видеоархив -->
     <section id="section-video" class="main-section section-block" data-section="video">
         <div class="section-header-row"><h2 class="section-title">ВИДЕОАРХИВ</h2></div>
         <div class="search-row">
@@ -1652,7 +1671,6 @@
         </div>
     </section>
 
-    <!-- Секция: Музыка -->
     <section id="section-music" class="main-section section-block" data-section="music">
         <div class="section-header-row"><h2 class="section-title">МУЗЫКАЛЬНЫЙ АРХИВ</h2></div>
         <div class="search-row">
@@ -1669,7 +1687,6 @@
         </div>
     </section>
 
-    <!-- Секция: Библиотека -->
     <section id="section-books" class="main-section section-block" data-section="books">
         <div class="section-header-row"><h2 class="section-title">БИБЛИОТЕКА</h2></div>
         <div class="search-row">
@@ -1689,7 +1706,6 @@
 
 <div id="post-page"></div>
 
-<!-- Модальное окно Входа / Регистрации -->
 <div class="modal-overlay" id="auth-modal">
     <div class="modal-card">
         <button onclick="closeAuthModal()" style="position: absolute; top: 16px; right: 16px; background: none; border: none; color: #666; cursor: pointer;"><i class="material-icons-round">close</i></button>
@@ -1706,7 +1722,6 @@
     </div>
 </div>
 
-<!-- Модальное окно фильтров -->
 <div class="modal-overlay" id="filter-modal">
     <div class="modal-card">
         <h4>Фильтры поиска</h4>
@@ -1719,7 +1734,6 @@
     </div>
 </div>
 
-<!-- Модальное окно качества / скорости -->
 <div class="modal-overlay" id="selector-modal">
     <div class="modal-card">
         <h4 id="selector-modal-title">Параметр</h4>
