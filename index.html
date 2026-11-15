@@ -210,13 +210,21 @@
             return `${minutes} мин`;
         }
 
-        // --- Navigation ---
+        // --- Навигация с анимацией ---
         window.switchTab = function(tabId) {
             currentSection = tabId;
             currentPostId = null;
-            document.querySelectorAll('.main-section').forEach(sec => sec.style.display = 'none');
+            document.querySelectorAll('.main-section').forEach(sec => {
+                sec.classList.remove('active-anim');
+                sec.style.display = 'none';
+            });
             const target = document.getElementById(`section-${tabId}`);
-            if (target) target.style.display = 'block';
+            if (target) {
+                target.style.display = 'block';
+                // Принудительный рефлоу для перезапуска анимации
+                void target.offsetWidth;
+                target.classList.add('active-anim');
+            }
             document.querySelectorAll('.nav-tab-btn').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.tab === tabId);
             });
@@ -243,7 +251,16 @@
                 else if (searchFilter === 'author') match = author.includes(searchQuery);
                 else match = title.includes(searchQuery) || author.includes(searchQuery);
                 
-                card.style.display = match ? '' : 'none';
+                if (match) {
+                    card.style.display = '';
+                    card.classList.add('card-appear');
+                    void card.offsetWidth; // рефлоу
+                    card.style.animation = 'none';
+                    card.offsetHeight; // триггер рефлоу
+                    card.style.animation = '';
+                } else {
+                    card.style.display = 'none';
+                }
             });
         };
 
@@ -262,28 +279,26 @@
             closeFilterModal();
         };
 
-        // --- Post Page ---
+        // --- Post Page (с очисткой URL) ---
         window.openPostPage = async function(collectionName, docId) {
             currentPostId = docId;
-            const url = new URL(window.location);
-            url.searchParams.set('id', docId);
-            url.searchParams.set('collection', collectionName);
-            window.history.pushState({}, '', url);
+            
+            // Сохраняем "чистую" ссылку в историю (без ?id=)
+            const cleanUrl = `${window.location.origin}/${collectionName}/${docId}`;
+            window.history.pushState({ id: docId, collection: collectionName }, '', cleanUrl);
             
             document.querySelector('.main-wrapper').style.display = 'none';
             document.querySelector('footer').style.display = 'none';
             
             const postPage = document.getElementById('post-page');
             postPage.style.display = 'block';
-            postPage.innerHTML = `<div style="text-align:center; padding: 50px; color: #888;">Загрузка...</div>`;
+            postPage.innerHTML = `<div class="loader-container"><div class="loader"></div><p>Загрузка поста...</p></div>`;
             
             try {
                 const docSnap = await getDoc(doc(db, collectionName, docId));
                 if (docSnap.exists()) {
                     const data = docSnap.data();
                     renderPostPage(collectionName, docId, data);
-                    // Убираем ?id= из адресной строки после отрисовки
-                    window.history.replaceState({}, document.title, window.location.pathname);
                 } else {
                     postPage.innerHTML = `<div style="text-align:center; padding: 50px; color: #ff5555;">Пост не найден.</div>`;
                 }
@@ -293,13 +308,12 @@
         };
 
         window.closePostPage = function() {
-            // Возвращаем URL без параметров
-            window.history.pushState({}, document.title, window.location.pathname);
-            
+            window.history.pushState({}, '', window.location.origin);
             document.getElementById('post-page').style.display = 'none';
             document.querySelector('.main-wrapper').style.display = 'block';
             document.querySelector('footer').style.display = 'block';
             currentPostId = null;
+            switchTab(currentSection);
         };
 
         function renderPostPage(collectionName, docId, data) {
@@ -385,13 +399,15 @@
                                 <button class="btn-vote btn-vote-minus ${userVote === -1 ? 'voted-minus' : ''}" onclick="handleVote('${docId}', -1, '${collectionName}', 'post')" title="Отрицательно (-1)"><i class="material-icons-round">remove</i></button>
                             </div>
                             
-                            <button class="share-btn" onclick="sharePost('${safeTitle}', '${window.location.origin}${window.location.pathname}?id=${docId}&collection=${collectionName}')">
+                            <button class="share-btn" onclick="sharePost('${safeTitle}', '${window.location.origin}/${collectionName}/${docId}')">
                                 <i class="material-icons-round">share</i> Поделиться
                             </button>
                         </div>
                     </div>
                 </div>
             `;
+            // Анимация появления
+            postPage.querySelector('.post-page-container').classList.add('slide-up');
         }
 
         function updateMetaTags(title, text, imageUrl) {
@@ -409,17 +425,31 @@
             document.getElementById('twitter-image').content = finalImage;
         }
 
-        window.sharePost = function(title, url) {
-            // Для копирования используем чистый URL без параметров, но с id для соцсетей
-            // (если хотим, чтобы пост открывался, нужно оставить ?id=)
-            // Здесь мы копируем чистый текст с заголовком и ссылкой
-            const cleanText = `«${title}» — ОРБИТА\n${url}`;
+        // --- Поделиться (красивая ссылка) ---
+        window.sharePost = function(title, cleanUrl) {
+            const finalUrl = cleanUrl || window.location.href;
             if (navigator.share) {
-                navigator.share({ title: title, text: cleanText, url: url }).catch(() => {});
+                navigator.share({ title: title, url: finalUrl }).catch(() => {});
             } else {
-                navigator.clipboard.writeText(cleanText).then(() => alert('Ссылка и текст скопированы!'));
+                navigator.clipboard.writeText(finalUrl).then(() => {
+                    showToast('Ссылка скопирована!');
+                });
             }
         };
+
+        // --- Toast-уведомление ---
+        function showToast(message) {
+            let toast = document.getElementById('toast');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = 'toast';
+                toast.className = 'toast';
+                document.body.appendChild(toast);
+            }
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2000);
+        }
 
         // --- Sidebar ---
         window.toggleSidebar = function() {
@@ -484,7 +514,7 @@
             setTimeout(() => { if (currentLang !== 'ru') container.style.display = 'none'; }, 1500);
         }
 
-        // --- Voting (исправлен двойной клик) ---
+        // --- Voting (с защитой от двойного клика) ---
         window.handleVote = async function(postId, voteType, sectionId, context = 'card') {
             let card = null;
             let plusBtn = null, minusBtn = null, ratingDisplay = null;
@@ -735,9 +765,8 @@
             if (menuShareBtn) {
                 menuShareBtn.addEventListener('click', (e) => {
                     e.stopPropagation(); if (moreMenu) moreMenu.classList.remove('open');
-                    const shareUrl = window.location.href;
-                    if (navigator.share) navigator.share({ title: document.title, url: shareUrl }).catch(() => {});
-                    else navigator.clipboard.writeText(shareUrl).then(() => alert('Ссылка скопирована!'));
+                    const shareUrl = `${window.location.origin}/video/${container.closest('.card').dataset.id}`;
+                    sharePost(container.closest('.card').querySelector('h3').textContent, shareUrl);
                 });
             }
             player.addEventListener('mouseenter', loadVideo, { once: true });
@@ -970,7 +999,7 @@
                 else if (score < 0) { ratingScoreClass = "negative"; scoreText = `${score}`; }
                 let parsedContent = window.parseContent(data.text, data.mediaUrls, data.mediaUrl);
                 
-                // Добавлена кнопка "Поделиться" рядом с рейтингом
+                const cleanShareUrl = `${window.location.origin}/${sectionId}/${id}`;
                 const ratingModuleHtml = `
                     <div class="card-footer-inner">
                         <div class="google-plus-rating">
@@ -978,7 +1007,7 @@
                             <span class="rating-score ${ratingScoreClass}">${scoreText}</span>
                             <button class="btn-vote btn-vote-minus ${userVote === -1 ? 'voted-minus' : ''}" onclick="event.stopPropagation(); handleVote('${id}', -1, '${sectionId}', 'card')" title="Отрицательно (-1)"><i class="material-icons-round">remove</i></button>
                         </div>
-                        <button class="share-btn-small" onclick="event.stopPropagation(); sharePost('${safeTitle}', '${window.location.origin}${window.location.pathname}?id=${id}&collection=${sectionId}')" title="Поделиться">
+                        <button class="share-btn-small" onclick="event.stopPropagation(); sharePost('${safeTitle}', '${cleanShareUrl}')" title="Поделиться">
                             <i class="material-icons-round">share</i>
                         </button>
                     </div>`;
@@ -992,7 +1021,7 @@
 
                 if (sectionId === "video") {
                     html += `
-                        <div class="card media-card media-card-stable" data-id="${id}" data-score="${score}" data-author="${safeAuthor}" data-title="${safeTitle}" onclick="openPostPage('${sectionId}', '${id}')">
+                        <div class="card media-card media-card-stable card-appear" data-id="${id}" data-score="${score}" data-author="${safeAuthor}" data-title="${safeTitle}" onclick="openPostPage('${sectionId}', '${id}')">
                             <h3 class="media-title-center i18n-translatability" data-original="${safeTitle}">${safeTitle}</h3>
                             <div class="card-meta">
                                 ${authorSlot}
@@ -1033,7 +1062,7 @@
                         </div>`;
                 } else if (sectionId === "music") {
                     html += `
-                        <div class="card media-card media-card-stable" data-id="${id}" data-score="${score}" data-author="${safeAuthor}" data-title="${safeTitle}" onclick="openPostPage('${sectionId}', '${id}')">
+                        <div class="card media-card media-card-stable card-appear" data-id="${id}" data-score="${score}" data-author="${safeAuthor}" data-title="${safeTitle}" onclick="openPostPage('${sectionId}', '${id}')">
                             <h3 class="media-title-center i18n-translatability" data-original="${safeTitle}">${safeTitle}</h3>
                             <div class="card-meta">
                                 ${authorSlot}
@@ -1055,7 +1084,7 @@
                         </div>`;
                 } else if (sectionId === "books") {
                     html += `
-                        <div class="card media-card-stable" data-id="${id}" data-score="${score}" data-author="${safeAuthor}" data-title="${safeTitle}" onclick="openPostPage('${sectionId}', '${id}')">
+                        <div class="card media-card-stable card-appear" data-id="${id}" data-score="${score}" data-author="${safeAuthor}" data-title="${safeTitle}" onclick="openPostPage('${sectionId}', '${id}')">
                             <h3 class="i18n-translatability" data-original="${safeTitle}">${safeTitle}</h3>
                             <div class="card-meta">
                                 ${authorSlot}
@@ -1072,7 +1101,7 @@
                         </div>`;
                 } else {
                     html += `
-                        <div class="card media-card-stable" data-id="${id}" data-score="${score}" data-author="${safeAuthor}" data-title="${safeTitle}" onclick="openPostPage('${sectionId}', '${id}')">
+                        <div class="card media-card-stable card-appear" data-id="${id}" data-score="${score}" data-author="${safeAuthor}" data-title="${safeTitle}" onclick="openPostPage('${sectionId}', '${id}')">
                             <h3 class="i18n-translatability" data-original="${safeTitle}">${safeTitle}</h3>
                             <div class="card-meta">
                                 ${authorSlot}
@@ -1105,11 +1134,21 @@
             switchTab('posts');
             initCosmicBackground();
 
-            const urlParams = new URLSearchParams(window.location.search);
-            const id = urlParams.get('id');
-            const col = urlParams.get('collection');
-            if (id && col) {
-                openPostPage(col, id);
+            // Проверка URL на наличие ID поста (новый формат /collection/id)
+            const pathParts = window.location.pathname.split('/').filter(Boolean);
+            if (pathParts.length >= 2) {
+                const col = pathParts[0];
+                const id = pathParts[1];
+                if (['posts', 'articles', 'photo', 'video', 'music', 'books'].includes(col)) {
+                    openPostPage(col, id);
+                }
+            } else {
+                const urlParams = new URLSearchParams(window.location.search);
+                const id = urlParams.get('id');
+                const col = urlParams.get('collection');
+                if (id && col) {
+                    openPostPage(col, id);
+                }
             }
         });
 
@@ -1170,31 +1209,6 @@
         }
         #space-canvas { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0; pointer-events: none; will-change: transform; }
         
-        /* Анимации появления */
-        @keyframes fadeInUp {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-        @keyframes pulse {
-            0% { transform: scale(1); }
-            50% { transform: scale(1.05); }
-            100% { transform: scale(1); }
-        }
-        @keyframes slideInRight {
-            from { opacity: 0; transform: translateX(30px); }
-            to { opacity: 1; transform: translateX(0); }
-        }
-
-        .card { animation: fadeInUp 0.4s ease-out forwards; }
-        .post-page-card { animation: fadeInUp 0.4s ease-out forwards; }
-        .back-btn { animation: fadeIn 0.3s ease-out; }
-        .share-btn:active, .btn-vote:active { animation: pulse 0.2s ease-out; }
-        .modal-card { animation: fadeInUp 0.3s ease-out; }
-
         header.orbit-header {
             position: fixed; top: 0; left: 0; width: 100%; height: 64px;
             background: rgba(10, 10, 12, 0.85); backdrop-filter: blur(12px);
@@ -1249,7 +1263,7 @@
             cursor: pointer; transition: all 0.2s ease; letter-spacing: 0.5px;
         }
         .sidebar-nav-item .material-icons-round { font-size: 20px; color: var(--text-muted); transition: color 0.2s; }
-        .sidebar-nav-item:hover { background: rgba(255, 208, 0, 0.1); color: var(--poster-yellow); transform: translateX(4px); }
+        .sidebar-nav-item:hover { background: rgba(255, 208, 0, 0.1); color: var(--poster-yellow); }
         .sidebar-nav-item:hover .material-icons-round { color: var(--poster-yellow); }
         .sidebar-divider { height: 1px; background: #222; margin: 12px 0; }
         .lang-switch-box { display: inline-flex; align-items: center; background: #18181c; border: 1px solid #333; border-radius: 20px; padding: 3px; position: relative; }
@@ -1285,7 +1299,8 @@
         .nav-tab-btn:hover { color: var(--poster-yellow); background: rgba(255, 208, 0, 0.05); }
         .nav-tab-btn.active { color: var(--poster-yellow); border-bottom: 2px solid var(--poster-yellow); border-radius: 6px 6px 0 0; background: rgba(255, 208, 0, 0.05); }
 
-        .main-section { display: none; animation: fadeIn 0.3s ease-out; }
+        .main-section { display: none; }
+        .main-section.active-anim { animation: fadeIn 0.4s ease-out; }
         .section-block { margin-bottom: 60px; scroll-margin-top: 80px; }
         .section-header-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 25px; flex-wrap: wrap; gap: 15px; }
         .section-title {
@@ -1331,7 +1346,8 @@
             text-decoration: none;
             color: inherit;
         }
-        .card:hover { border-color: #444; transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.4); }
+        .card-appear { animation: slideUp 0.5s ease-out; }
+        .card:hover { border-color: #444; transform: translateY(-2px); }
         
         .card.highlighted {
             border-color: var(--poster-yellow) !important;
@@ -1464,12 +1480,14 @@
         
         footer { background: #050505; border-top: 1px solid #222; padding: 40px 20px; text-align: center; position: relative; z-index: 10; }
 
+        /* Страница поста */
         #post-page {
             display: none; position: relative; z-index: 10;
             margin-top: 64px; padding: 40px 20px 60px 20px;
             max-width: 900px; margin-left: auto; margin-right: auto;
         }
         .post-page-container { display: flex; flex-direction: column; gap: 20px; }
+        .post-page-container.slide-up { animation: slideUp 0.5s ease-out; }
         .back-btn {
             background: #121214; border: 1px solid #333; color: var(--text-muted);
             padding: 10px 16px; border-radius: 6px; font-family: 'Montserrat', sans-serif;
@@ -1501,6 +1519,40 @@
             transition: all 0.2s;
         }
         .share-btn:hover { border-color: var(--poster-yellow); color: var(--poster-yellow); }
+
+        /* Анимации */
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Лоадер */
+        .loader-container {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            padding: 50px; color: var(--text-muted); gap: 15px;
+        }
+        .loader {
+            width: 40px; height: 40px; border: 3px solid #333; border-top-color: var(--poster-yellow);
+            border-radius: 50%; animation: spin 1s linear infinite;
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(100px);
+            background: var(--poster-yellow); color: #000; padding: 12px 24px;
+            border-radius: 8px; font-family: 'Montserrat', sans-serif; font-weight: 600;
+            font-size: 0.9rem; z-index: 9999; opacity: 0; transition: all 0.3s ease;
+            pointer-events: none; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        }
+        .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 
         @media (max-width: 768px) {
             .main-wrapper { padding: 20px 12px 40px 12px; }
@@ -1603,6 +1655,7 @@
         </div>
     </section>
 
+    <!-- Секция: Посты -->
     <section id="section-posts" class="main-section section-block" data-section="posts">
         <div class="section-header-row">
             <h2 class="section-title">ПОСТЫ</h2>
@@ -1621,6 +1674,7 @@
         </div>
     </section>
 
+    <!-- Секция: Статьи -->
     <section id="section-articles" class="main-section section-block" data-section="articles">
         <div class="section-header-row">
             <h2 class="section-title">СТАТЬИ</h2>
@@ -1639,6 +1693,7 @@
         </div>
     </section>
 
+    <!-- Секция: Фотогалерея -->
     <section id="section-photo" class="main-section section-block" data-section="photo">
         <div class="section-header-row"><h2 class="section-title">ФОТОГАЛЕРЕЯ</h2></div>
         <div class="search-row">
@@ -1655,6 +1710,7 @@
         </div>
     </section>
 
+    <!-- Секция: Видеоархив -->
     <section id="section-video" class="main-section section-block" data-section="video">
         <div class="section-header-row"><h2 class="section-title">ВИДЕОАРХИВ</h2></div>
         <div class="search-row">
@@ -1671,6 +1727,7 @@
         </div>
     </section>
 
+    <!-- Секция: Музыка -->
     <section id="section-music" class="main-section section-block" data-section="music">
         <div class="section-header-row"><h2 class="section-title">МУЗЫКАЛЬНЫЙ АРХИВ</h2></div>
         <div class="search-row">
@@ -1687,6 +1744,7 @@
         </div>
     </section>
 
+    <!-- Секция: Библиотека -->
     <section id="section-books" class="main-section section-block" data-section="books">
         <div class="section-header-row"><h2 class="section-title">БИБЛИОТЕКА</h2></div>
         <div class="search-row">
@@ -1706,6 +1764,7 @@
 
 <div id="post-page"></div>
 
+<!-- Модальное окно Входа / Регистрации -->
 <div class="modal-overlay" id="auth-modal">
     <div class="modal-card">
         <button onclick="closeAuthModal()" style="position: absolute; top: 16px; right: 16px; background: none; border: none; color: #666; cursor: pointer;"><i class="material-icons-round">close</i></button>
@@ -1722,6 +1781,7 @@
     </div>
 </div>
 
+<!-- Модальное окно фильтров -->
 <div class="modal-overlay" id="filter-modal">
     <div class="modal-card">
         <h4>Фильтры поиска</h4>
@@ -1734,6 +1794,7 @@
     </div>
 </div>
 
+<!-- Модальное окно качества / скорости -->
 <div class="modal-overlay" id="selector-modal">
     <div class="modal-card">
         <h4 id="selector-modal-title">Параметр</h4>
