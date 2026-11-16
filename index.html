@@ -182,7 +182,7 @@
             let usedIndexes = new Set();
             safeText = safeText.replace(/\[img(\d+)\]/g, (match, num) => {
                 const idx = parseInt(num) - 1;
-                if (urls[idx] && isValidURL(urls[idx])) {
+                if (urls[idx] && isValidURL(urls[idx]) && urls[idx].match(/\.(jpg|jpeg|png|gif|webp|svg)/i)) {
                     usedIndexes.add(idx);
                     return `<img src="${escapeHTML(urls[idx])}" class="inline-post-img" alt="Фото" loading="lazy">`;
                 }
@@ -191,18 +191,8 @@
 
             safeText = sanitizeHTML(safeText);
 
-            // Вставляем только те картинки, которые не были использованы через [imgN]
-            let topImagesHtml = "";
-            urls.forEach((url, idx) => {
-                if (!usedIndexes.has(idx) && isValidURL(url)) {
-                    // Проверяем, что это действительно изображение, а не видео/аудио
-                    if (url.match(/\.(jpg|jpeg|png|gif|webp|svg)/i)) {
-                        topImagesHtml += `<img src="${escapeHTML(url)}" class="inline-post-img" style="margin-bottom:15px;" alt="Фото" loading="lazy">`;
-                    }
-                }
-            });
-
-            return topImagesHtml + `<div class="word-text i18n-translatability" data-original="${escapeHTML(text || "")}">${safeText}</div>`;
+            // Больше не вставляем картинки автоматически, только те, что были в [imgN]
+            return `<div class="word-text i18n-translatability" data-original="${escapeHTML(text || "")}">${safeText}</div>`;
         };
 
         function calculateReadTime(text) {
@@ -217,7 +207,7 @@
 
         // --- Навигация с анимацией ---
         window.switchTab = function(tabId) {
-            // Если открыта страница поста, закрываем её
+            // ИСПРАВЛЕНО: Если открыта страница поста, закрываем её
             if (currentPostId) {
                 closePostPage();
             }
@@ -405,6 +395,7 @@
 
             updateMetaTags(safeTitle, data.text, safeMediaUrl);
 
+            // ИСПРАВЛЕНО: Убрана лишняя иконка person
             postPage.innerHTML = `
                 <div class="post-page-container">
                     <button class="back-btn" onclick="closePostPage()">
@@ -415,7 +406,7 @@
                         <h1 class="post-page-title">${safeTitle}</h1>
                         
                         <div class="post-page-meta">
-                            ${safeAuthor ? `<div class="card-author"><i class="material-icons-round">person</i> ${safeAuthor}</div>` : ''}
+                            ${safeAuthor ? `<div class="card-author">${safeAuthor}</div>` : ''}
                             ${dateStr ? `<div class="card-date"><i class="material-icons-round">calendar_today</i> ${dateStr}</div>` : ''}
                             <div class="card-date"><i class="material-icons-round">schedule</i> ${readTime}</div>
                         </div>
@@ -442,13 +433,12 @@
                 </div>
             `;
             
-            // Инициализация плееров на странице поста
             if (collectionName === 'video') {
-                postPage.querySelectorAll('.card').forEach(card => window.initCustomVideoPlayer(card));
                 const playerContainer = postPage.querySelector('.custom-video-player')?.closest('.post-page-card');
                 if (playerContainer) window.initCustomVideoPlayer(playerContainer);
             } else if (collectionName === 'music') {
-                postPage.querySelectorAll('.custom-audio-player').forEach(el => window.initCustomAudioPlayer(el.closest('.post-page-card')));
+                const playerContainer = postPage.querySelector('.custom-audio-player')?.closest('.post-page-card');
+                if (playerContainer) window.initCustomAudioPlayer(playerContainer);
             }
             
             postPage.querySelector('.post-page-container').classList.add('slide-up');
@@ -817,6 +807,25 @@
             }
             player.addEventListener('mouseenter', loadVideo, { once: true });
             player.addEventListener('touchstart', loadVideo, { once: true });
+
+            window.addEventListener('resize', () => {
+                if (document.fullscreenElement === player) {
+                    const w = window.innerWidth;
+                    const h = window.innerHeight;
+                    video.style.width = w + 'px';
+                    video.style.height = h + 'px';
+                }
+            });
+            window.addEventListener('orientationchange', () => {
+                if (document.fullscreenElement === player) {
+                    setTimeout(() => {
+                        const w = window.innerWidth;
+                        const h = window.innerHeight;
+                        video.style.width = w + 'px';
+                        video.style.height = h + 'px';
+                    }, 100);
+                }
+            });
         };
 
         window.initCustomAudioPlayer = function(container) {
@@ -1600,7 +1609,18 @@
         }
         .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
 
+        /* Ограничение высоты плеера на мобильных */
         @media (max-width: 768px) {
+            .custom-video-player {
+                max-height: 60vh;
+            }
+            .v-wrapper {
+                padding-top: 0;
+                height: 60vh;
+            }
+            .v-wrapper video {
+                object-fit: contain;
+            }
             .main-wrapper { padding: 20px 12px 40px 12px; }
             .grid-display { grid-template-columns: 1fr; }
             .about-box { padding: 20px; }
