@@ -6,7 +6,7 @@
     <title>ОРБИТА — Космический Архив</title>
     <link rel="icon" type="image/png" href="ssma.png">
     
-    <!-- Open Graph Meta (динамически обновляются в JS) -->
+    <!-- Open Graph Meta -->
     <meta property="og:site_name" content="ОРБИТА">
     <meta property="og:type" content="website">
     <meta property="og:title" id="og-title" content="ОРБИТА — Космический Архив">
@@ -232,12 +232,15 @@
             searchQuery = '';
             const searchInput = document.getElementById(`search-input-${tabId}`);
             if (searchInput) searchInput.value = '';
-            applySearchAndFilter(tabId);
+            if (tabId !== 'about') {
+                applySearchAndFilter(tabId);
+            }
             window.scrollTo({ top: 0, behavior: 'smooth' });
             closeSidebar();
         };
 
         window.applySearchAndFilter = function(sectionId = currentSection) {
+            if (sectionId === 'about') return;
             const input = document.getElementById(`search-input-${sectionId}`) || document.getElementById(`search-input-${currentSection}`);
             if (input) searchQuery = input.value.toLowerCase().trim();
             
@@ -401,7 +404,10 @@
 
             updateMetaTags(safeTitle, data.text || '', safeMediaUrl);
 
-            // ИСПРАВЛЕНО: mediaBlock теперь идет НАВЕРХУ (сразу после мета-информации, перед текстом)
+            // Иконки лайков (сердечки)
+            const likeIconName = userVote === 1 ? 'favorite' : 'favorite_border';
+            const dislikeIconName = userVote === -1 ? 'thumb_down' : 'thumb_down_alt';
+
             postPage.innerHTML = `
                 <div class="post-page-container">
                     <button class="back-btn" onclick="closePostPage()">
@@ -426,9 +432,9 @@
                         
                         <div class="post-page-footer">
                             <div class="google-plus-rating" id="post-rating-${docId}">
-                                <button class="btn-vote btn-vote-plus ${userVote === 1 ? 'voted-plus' : ''}" onclick="handleVote('${docId}', 1, '${collectionName}', 'post')" title="Поддержать (+1)"><i class="material-icons-round">add</i></button>
+                                <button class="btn-vote btn-vote-plus ${userVote === 1 ? 'voted-plus' : ''}" onclick="handleVote('${docId}', 1, '${collectionName}', 'post')" title="Нравится"><i class="material-icons-round">${likeIconName}</i></button>
                                 <span class="rating-score ${ratingScoreClass}">${scoreText}</span>
-                                <button class="btn-vote btn-vote-minus ${userVote === -1 ? 'voted-minus' : ''}" onclick="handleVote('${docId}', -1, '${collectionName}', 'post')" title="Отрицательно (-1)"><i class="material-icons-round">remove</i></button>
+                                <button class="btn-vote btn-vote-minus ${userVote === -1 ? 'voted-minus' : ''}" onclick="handleVote('${docId}', -1, '${collectionName}', 'post')" title="Не нравится"><i class="material-icons-round">${dislikeIconName}</i></button>
                             </div>
                             
                             <button class="share-btn" onclick="sharePost('${safeTitle}', '${window.location.origin}/${collectionName}/${docId}')">
@@ -586,6 +592,10 @@
             }
             const newScore = currentScore + delta;
             
+            const likeIconName = newVote === 1 ? 'favorite' : 'favorite_border';
+            const dislikeIconName = newVote === -1 ? 'thumb_down' : 'thumb_down_alt';
+
+            // Обновляем карточку в ленте
             if (card) {
                 card.setAttribute('data-score', newScore);
                 const mainRating = card.querySelector('.rating-score');
@@ -597,10 +607,17 @@
                     else if (newScore < 0) { mainRating.textContent = `${newScore}`; mainRating.classList.add('negative'); }
                     else { mainRating.textContent = `0`; mainRating.classList.add('neutral'); }
                 }
-                if (mainPlus) mainPlus.classList.toggle('voted-plus', newVote === 1);
-                if (mainMinus) mainMinus.classList.toggle('voted-minus', newVote === -1);
+                if (mainPlus) {
+                    mainPlus.classList.toggle('voted-plus', newVote === 1);
+                    mainPlus.querySelector('.material-icons-round').textContent = likeIconName;
+                }
+                if (mainMinus) {
+                    mainMinus.classList.toggle('voted-minus', newVote === -1);
+                    mainMinus.querySelector('.material-icons-round').textContent = dislikeIconName;
+                }
             }
 
+            // Обновляем открытый пост, если он открыт
             const postRatingContainer = document.getElementById(`post-rating-${postId}`);
             if (postRatingContainer) {
                 const postRating = postRatingContainer.querySelector('.rating-score');
@@ -612,8 +629,14 @@
                     else if (newScore < 0) { postRating.textContent = `${newScore}`; postRating.classList.add('negative'); }
                     else { postRating.textContent = `0`; postRating.classList.add('neutral'); }
                 }
-                if (postPlus) postPlus.classList.toggle('voted-plus', newVote === 1);
-                if (postMinus) postMinus.classList.toggle('voted-minus', newVote === -1);
+                if (postPlus) {
+                    postPlus.classList.toggle('voted-plus', newVote === 1);
+                    postPlus.querySelector('.material-icons-round').textContent = likeIconName;
+                }
+                if (postMinus) {
+                    postMinus.classList.toggle('voted-minus', newVote === -1);
+                    postMinus.querySelector('.material-icons-round').textContent = dislikeIconName;
+                }
             }
 
             userVotes[voteKey] = newVote;
@@ -1154,12 +1177,16 @@
                 let parsedContent = window.parseContent(data.text, data.mediaUrls, data.mediaUrl);
                 
                 const cleanShareUrl = `${window.location.origin}/${sectionId}/${id}`;
+                
+                const likeIconName = userVote === 1 ? 'favorite' : 'favorite_border';
+                const dislikeIconName = userVote === -1 ? 'thumb_down' : 'thumb_down_alt';
+
                 const ratingModuleHtml = `
                     <div class="card-footer-inner">
                         <div class="google-plus-rating">
-                            <button class="btn-vote btn-vote-plus ${userVote === 1 ? 'voted-plus' : ''}" onclick="event.stopPropagation(); handleVote('${id}', 1, '${sectionId}', 'card')" title="Поддержать (+1)"><i class="material-icons-round">add</i></button>
+                            <button class="btn-vote btn-vote-plus ${userVote === 1 ? 'voted-plus' : ''}" onclick="event.stopPropagation(); handleVote('${id}', 1, '${sectionId}', 'card')" title="Нравится"><i class="material-icons-round">${likeIconName}</i></button>
                             <span class="rating-score ${ratingScoreClass}">${scoreText}</span>
-                            <button class="btn-vote btn-vote-minus ${userVote === -1 ? 'voted-minus' : ''}" onclick="event.stopPropagation(); handleVote('${id}', -1, '${sectionId}', 'card')" title="Отрицательно (-1)"><i class="material-icons-round">remove</i></button>
+                            <button class="btn-vote btn-vote-minus ${userVote === -1 ? 'voted-minus' : ''}" onclick="event.stopPropagation(); handleVote('${id}', -1, '${sectionId}', 'card')" title="Не нравится"><i class="material-icons-round">${dislikeIconName}</i></button>
                         </div>
                         <button class="share-btn-small" onclick="event.stopPropagation(); sharePost('${safeTitle}', '${cleanShareUrl}')" title="Поделиться">
                             <i class="material-icons-round">share</i>
@@ -1173,7 +1200,6 @@
                     ? `<div class="attachments-list">${data.attachments.map(a => `<a href="${a.url}" target="_blank" class="attachment-link" onclick="event.stopPropagation()"><i class="material-icons-round">attach_file</i> ${escapeHTML(a.name || 'Файл')}</a>`).join('')}</div>`
                     : '';
 
-                // ИСПРАВЛЕНО: Обложка/плеер на главной карточке теперь находится НАВЕРХУ (до текста)
                 if (sectionId === "video") {
                     html += `
                         <div class="card media-card media-card-stable card-appear" data-id="${id}" data-score="${score}" data-author="${safeAuthor}" data-title="${safeTitle}" onclick="openPostPage('${sectionId}', '${id}')">
@@ -1224,7 +1250,6 @@
                             <div class="card-footer-bar">${ratingModuleHtml}</div>
                         </div>`;
                 } else {
-                    // Для постов и статей обложка теперь первая в .scroll-content
                     html += `
                         <div class="card media-card-stable card-appear" data-id="${id}" data-score="${score}" data-author="${safeAuthor}" data-title="${safeTitle}" onclick="openPostPage('${sectionId}', '${id}')">
                             <h3 class="i18n-translatability" data-original="${safeTitle}">${safeTitle}</h3>
@@ -1267,7 +1292,9 @@
             if (pathParts.length >= 2) {
                 const col = pathParts[0];
                 const id = pathParts[1];
-                if (['posts', 'articles', 'photo', 'video', 'music', 'books'].includes(col)) {
+                if (col === 'about') {
+                    switchTab('about');
+                } else if (['posts', 'articles', 'photo', 'video', 'music', 'books'].includes(col)) {
                     openPostPage(col, id);
                 }
             } else {
@@ -1321,8 +1348,8 @@
             --border-poster: #FFD000;
             --text-main: #FFFFFF;
             --text-muted: #A4A4B5;
-            --google-plus-green: #00E676;
-            --google-minus-red: #FF1744;
+            --google-plus-green: #FF3366; /* Яркий цвет лайка (розово-красный для сердечка) */
+            --google-minus-red: #3388FF;  /* Синий для дизлайка */
             --card-border: #222222;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent !important; outline: none; }
@@ -1478,11 +1505,6 @@
         .card-appear { animation: slideUp 0.5s ease-out; }
         .card:hover { border-color: #444; transform: translateY(-2px); }
         
-        .card.highlighted {
-            border-color: var(--poster-yellow) !important;
-            box-shadow: 0 0 15px rgba(255, 208, 0, 0.2);
-        }
-        
         .card h3 { font-family: 'Russo One', sans-serif; font-size: 1.25rem; text-transform: uppercase; margin-bottom: 12px; color: var(--poster-yellow); overflow-wrap: anywhere; word-break: break-word; line-height: 1.3; }
         
         .card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
@@ -1526,10 +1548,14 @@
         .card-footer-inner { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
         
         .google-plus-rating { display: flex; align-items: center; background: #0a0a0c; border: 1px solid #222; border-radius: 20px; padding: 4px 8px; gap: 10px; }
-        .btn-vote { background: transparent; border: none; color: #555; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; }
+        .btn-vote { background: transparent; border: none; color: #777; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s; }
         .btn-vote:hover { background: #222; color: #fff; }
-        .btn-vote-plus.voted-plus { background: var(--google-plus-green); color: #000; }
-        .btn-vote-minus.voted-minus { background: var(--google-minus-red); color: #fff; }
+        .btn-vote .material-icons-round { font-size: 18px; }
+        .btn-vote-plus.voted-plus { background: rgba(255, 51, 102, 0.15); color: var(--google-plus-green); }
+        .btn-vote-plus.voted-plus .material-icons-round { color: var(--google-plus-green); }
+        .btn-vote-minus.voted-minus { background: rgba(51, 136, 255, 0.15); color: var(--google-minus-red); }
+        .btn-vote-minus.voted-minus .material-icons-round { color: var(--google-minus-red); }
+        
         .rating-score { font-family: 'Russo One', sans-serif; font-size: 0.95rem; min-width: 28px; text-align: center; }
         .rating-score.positive { color: var(--google-plus-green); }
         .rating-score.negative { color: var(--google-minus-red); }
@@ -1544,117 +1570,39 @@
         .share-btn-small .material-icons-round { font-size: 18px; }
 
         .custom-video-player {
-            width: 100%;
-            background: #000000;
-            border: 1px solid #222;
-            border-radius: 10px;
-            margin-bottom: 15px;
-            display: flex;
-            flex-direction: column;
-            position: relative;
-            transform: translateZ(0);
-            will-change: transform;
-            user-select: none;
-            overflow: hidden;
+            width: 100%; background: #000000; border: 1px solid #222; border-radius: 10px;
+            margin-bottom: 15px; display: flex; flex-direction: column; position: relative;
+            transform: translateZ(0); will-change: transform; user-select: none; overflow: hidden;
         }
-        .custom-video-player:fullscreen,
-        .custom-video-player:-webkit-full-screen {
-            width: 100vw !important;
-            height: 100vh !important;
-            border: none;
-            border-radius: 0;
-            background: #000;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            overflow: visible;
+        .custom-video-player:fullscreen, .custom-video-player:-webkit-full-screen {
+            width: 100vw !important; height: 100vh !important; border: none; border-radius: 0;
+            background: #000; display: flex; flex-direction: column; justify-content: space-between; overflow: visible;
         }
-        .v-wrapper {
-            position: relative;
-            width: 100%;
-            padding-top: 56.25%;
-            background-color: #000;
-            overflow: hidden;
-            cursor: pointer;
-        }
-        .custom-video-player:fullscreen .v-wrapper,
-        .custom-video-player:-webkit-full-screen .v-wrapper {
-            flex-grow: 1;
-            padding-top: 0;
-            height: calc(100vh - 56px);
-        }
-        .v-wrapper video {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-            display: block;
-            background: #000;
-        }
+        .v-wrapper { position: relative; width: 100%; padding-top: 56.25%; background-color: #000; overflow: hidden; cursor: pointer; }
+        .custom-video-player:fullscreen .v-wrapper, .custom-video-player:-webkit-full-screen .v-wrapper { flex-grow: 1; padding-top: 0; height: calc(100vh - 56px); }
+        .v-wrapper video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; display: block; background: #000; }
         .v-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.35);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 4;
-            transition: opacity 0.25s ease;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.35);
+            display: flex; align-items: center; justify-content: center; z-index: 4; transition: opacity 0.25s ease;
         }
         .custom-video-player.is-playing .v-overlay { opacity: 0; pointer-events: none; }
         .v-play-center {
-            background: var(--poster-yellow);
-            border: none;
-            color: #000;
-            width: 56px;
-            height: 56px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            box-shadow: 0 4px 15px rgba(255, 208, 0, 0.4);
+            background: var(--poster-yellow); border: none; color: #000; width: 56px; height: 56px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 15px rgba(255, 208, 0, 0.4);
             transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), background 0.2s;
         }
         .v-play-center:hover { transform: scale(1.1); background: #ffe033; }
         .v-play-center .material-icons-round { font-size: 34px; }
 
         .v-gesture-speed {
-            display: none;
-            position: absolute;
-            top: 15px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0,0,0,0.85);
-            border: 1px solid var(--poster-yellow);
-            color: #fff;
-            padding: 6px 16px;
-            border-radius: 20px;
-            font-family: 'Russo One', sans-serif;
-            font-size: 0.9rem;
-            z-index: 10;
-            align-items: center;
-            gap: 6px;
+            display: none; position: absolute; top: 15px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.85); border: 1px solid var(--poster-yellow); color: #fff; padding: 6px 16px;
+            border-radius: 20px; font-family: 'Russo One', sans-serif; font-size: 0.9rem; z-index: 10; align-items: center; gap: 6px;
         }
         .v-gesture-seek {
-            display: none;
-            position: absolute;
-            top: 0;
-            width: 40%;
-            height: 100%;
-            background: rgba(255, 208, 0, 0.15);
-            color: #fff;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            z-index: 9;
-            font-family: 'Russo One', sans-serif;
-            font-size: 0.85rem;
+            display: none; position: absolute; top: 0; width: 40%; height: 100%; background: rgba(255, 208, 0, 0.15);
+            color: #fff; flex-direction: column; align-items: center; justify-content: center; z-index: 9;
+            font-family: 'Russo One', sans-serif; font-size: 0.85rem;
         }
         .v-gesture-seek-left { left: 0; border-radius: 0 100% 100% 0 / 0 50% 50% 0; }
         .v-gesture-seek-right { right: 0; border-radius: 100% 0 0 100% / 50% 0 0 50%; }
@@ -1665,102 +1613,21 @@
             100% { opacity: 0; transform: scale(1.1); }
         }
 
-        .v-controls {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: #121214;
-            padding: 8px 12px;
-            border-top: 1px solid #222;
-            z-index: 6;
-        }
-        .custom-video-player:fullscreen .v-controls,
-        .custom-video-player:-webkit-full-screen .v-controls {
-            background: rgba(18, 18, 20, 0.95);
-            padding: 12px 16px;
-            border-top: 1px solid #333;
-        }
-        .v-btn {
-            background: transparent;
-            border: none;
-            color: #fff;
-            width: 34px;
-            height: 34px;
-            border-radius: 6px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            flex-shrink: 0;
-            transition: background 0.15s, color 0.15s;
-        }
+        .v-controls { display: flex; align-items: center; gap: 8px; background: #121214; padding: 8px 12px; border-top: 1px solid #222; z-index: 6; }
+        .custom-video-player:fullscreen .v-controls, .custom-video-player:-webkit-full-screen .v-controls { background: rgba(18, 18, 20, 0.95); padding: 12px 16px; border-top: 1px solid #333; }
+        .v-btn { background: transparent; border: none; color: #fff; width: 34px; height: 34px; border-radius: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: background 0.15s, color 0.15s; }
         .v-btn:hover { background: rgba(255, 208, 0, 0.15); color: var(--poster-yellow); }
         .v-play-btn { background: var(--poster-yellow); color: #000; width: 34px; height: 34px; border-radius: 50%; }
         .v-play-btn:hover { background: #ffe033; color: #000; }
-        .v-progress-bar {
-            flex-grow: 1;
-            height: 8px;
-            background: #333;
-            border-radius: 4px;
-            cursor: pointer;
-            position: relative;
-            overflow: hidden;
-            min-width: 40px;
-        }
+        .v-progress-bar { flex-grow: 1; height: 8px; background: #333; border-radius: 4px; cursor: pointer; position: relative; overflow: hidden; min-width: 40px; }
         .v-progress-fill { height: 100%; background: var(--poster-yellow); width: 0%; border-radius: 4px; }
-        .v-time-display {
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: var(--text-muted);
-            min-width: 78px;
-            text-align: center;
-            flex-shrink: 0;
-        }
-        .v-more-menu {
-            display: none;
-            position: absolute;
-            bottom: 100%;
-            right: 0;
-            background: #121214;
-            border: 1px solid #333;
-            margin-bottom: 8px;
-            z-index: 20;
-            flex-direction: column;
-            min-width: 180px;
-            box-shadow: 0px 8px 20px rgba(0,0,0,0.9);
-            border-radius: 6px;
-            overflow: hidden;
-        }
+        .v-time-display { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); min-width: 78px; text-align: center; flex-shrink: 0; }
+        .v-more-menu { display: none; position: absolute; bottom: 100%; right: 0; background: #121214; border: 1px solid #333; margin-bottom: 8px; z-index: 20; flex-direction: column; min-width: 180px; box-shadow: 0px 8px 20px rgba(0,0,0,0.9); border-radius: 6px; overflow: hidden; }
         .v-more-menu.open { display: flex; }
-        .v-menu-item {
-            background: transparent;
-            border: none;
-            color: #ffffff;
-            padding: 11px 16px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-family: 'Montserrat', sans-serif;
-            font-size: 0.85rem;
-            font-weight: 600;
-            cursor: pointer;
-            text-align: left;
-            transition: background 0.15s, color 0.15s;
-        }
+        .v-menu-item { background: transparent; border: none; color: #ffffff; padding: 11px 16px; display: flex; align-items: center; gap: 12px; font-family: 'Montserrat', sans-serif; font-size: 0.85rem; font-weight: 600; cursor: pointer; text-align: left; transition: background 0.15s, color 0.15s; }
         .v-menu-item:hover { background: var(--poster-yellow); color: #000; }
 
-        .custom-audio-player {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            background: #121214;
-            border: 1px solid #222;
-            border-radius: 8px;
-            padding: 12px 16px;
-            margin-bottom: 15px;
-            width: 100%;
-            user-select: none;
-        }
+        .custom-audio-player { display: flex; align-items: center; gap: 12px; background: #121214; border: 1px solid #222; border-radius: 8px; padding: 12px 16px; margin-bottom: 15px; width: 100%; user-select: none; }
         .custom-audio-player audio { display: none; }
         .custom-audio-player .play-btn { background: var(--poster-yellow); border: none; color: #000; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
         .custom-audio-player .progress-bar { flex-grow: 1; height: 8px; background: #333; border-radius: 4px; cursor: pointer; position: relative; overflow: hidden; }
