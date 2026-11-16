@@ -1,3 +1,22 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+const firebaseConfig = {
+    apiKey: "AIzaSyBYOyzTnpv6RH9sGziwzf2tJTW5ifuEyqY",
+    authDomain: "orbita1917.firebaseapp.com",
+    projectId: "orbita1917",
+    storageBucket: "orbita1917.firebasestorage.app",
+    messagingSenderId: "1085452844318",
+    appId: "1:1085452844318:web:dfee91a234981b58619d0f",
+    measurementId: "G-HY2LRW1Q8T"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+const BOT_REGEX = /telegrambot|twitterbot|facebookexternalhit|whatsapp|discordbot|vkshare|linkedinbot|yandexbot|googlebot|bingbot|applebot|slackbot|skypeuripreview/i;
+const VALID_COLLECTIONS = ["posts", "articles", "photo", "video", "music", "books"];
+
 export default async (request: Request, context: any) => {
     const url = new URL(request.url);
     const userAgent = request.headers.get("user-agent") || "";
@@ -10,7 +29,7 @@ export default async (request: Request, context: any) => {
     let id = null;
     let collection = null;
 
-    // 1. Проверяем новый формат пути: /posts/ID
+    // 1. Проверяем новый формат пути: /posts/ID или /articles/ID
     const pathParts = url.pathname.split("/").filter(Boolean);
     if (pathParts.length >= 2 && VALID_COLLECTIONS.includes(pathParts[0])) {
         collection = pathParts[0];
@@ -35,32 +54,21 @@ export default async (request: Request, context: any) => {
     }
 
     try {
-        // ЖЁСТКИЙ ТАЙМАУТ: если Firestore не ответит за 1.5 сек — пропускаем
-        const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error("Timeout")), 1500)
-        );
-        
-        const fetchPromise = (async () => {
-            const docRef = doc(db, collection, id);
-            const docSnap = await getDoc(docRef);
-            return docSnap;
-        })();
+        const docRef = doc(db, collection, id);
+        const docSnap = await getDoc(docRef);
 
-        const docSnap = await Promise.race([fetchPromise, timeoutPromise]) as any;
-
-        if (!docSnap || !docSnap.exists()) {
-            // Если документ не найден — НЕ отдаём заглушку с логотипом,
-            // а пропускаем дальше, чтобы Telegram не закэшировал плохую карточку
+        if (!docSnap.exists()) {
             return context.next();
         }
 
         const data = docSnap.data();
         const title = data.title || "ОРБИТА — Космический Архив";
         
+        // Очищаем текст от HTML и тегов картинок
         let rawText = data.text || "";
         rawText = rawText.replace(/\[img\d+\]/g, '');
         rawText = rawText.replace(/<[^>]*>/g, '');
-        rawText = rawText.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+        rawText = rawText.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'); // Оставляем только текст ссылок
         
         const description = rawText.trim().substring(0, 150) + (rawText.length > 150 ? "..." : "");
         const imageUrl = data.mediaUrl || (data.mediaUrls && data.mediaUrls[0]) || "https://i.ibb.co/sdwwQJcF/IMG-20261102-232112-037.png";
@@ -71,6 +79,7 @@ export default async (request: Request, context: any) => {
     <meta charset="UTF-8">
     <title>${escapeXml(title)} — ОРБИТА</title>
     <meta name="description" content="${escapeXml(description)}">
+
     <meta property="og:site_name" content="ОРБИТА">
     <meta property="og:type" content="article">
     <meta property="og:title" content="${escapeXml(title)} — ОРБИТА">
@@ -78,24 +87,37 @@ export default async (request: Request, context: any) => {
     <meta property="og:image" content="${escapeXml(imageUrl)}">
     <meta property="og:image:secure_url" content="${escapeXml(imageUrl)}">
     <meta property="og:url" content="${url.href}">
+
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="${escapeXml(title)} — ОРБИТА">
     <meta name="twitter:description" content="${escapeXml(description)}">
     <meta name="twitter:image" content="${escapeXml(imageUrl)}">
 </head>
-<body><h1>${escapeXml(title)}</h1><p>${escapeXml(description)}</p><img src="${escapeXml(imageUrl)}" alt="Cover"></body>
+<body>
+    <h1>${escapeXml(title)}</h1>
+    <p>${escapeXml(description)}</p>
+    <img src="${escapeXml(imageUrl)}" alt="Cover">
+</body>
 </html>`;
 
         return new Response(html, {
             headers: {
                 "Content-Type": "text/html; charset=utf-8",
-                "Cache-Control": "no-store"  // Запрещаем кэширование на стороне Netlify
+                "Cache-Control": "public, max-age=300, s-maxage=300"
             }
         });
 
     } catch (err) {
-        // При любой ошибке или таймауте — НЕ отдаём заглушку, а пропускаем
-        console.error("[OG] Error or Timeout:", err);
+        console.error("[OG] Generator Error:", err);
         return context.next();
     }
 };
+
+function escapeXml(unsafe: string) {
+    return String(unsafe)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&apos;");
+}
