@@ -166,7 +166,8 @@
             return text;
         }
 
-        window.parseContent = function(text, mediaUrls, fallbackUrl) {
+        // Исправленный parseContent: не вставляет видео/аудио как картинки
+        window.parseContent = function(text, mediaUrls, fallbackUrl, sectionId) {
             let urls = [];
             if (mediaUrls && Array.isArray(mediaUrls)) urls = [...mediaUrls];
             else if (fallbackUrl) urls = [fallbackUrl];
@@ -179,23 +180,33 @@
             });
             
             let usedIndexes = new Set();
-            safeText = safeText.replace(/\[img(\d+)\]/g, (match, num) => {
-                const idx = parseInt(num) - 1;
-                if (urls[idx] && isValidURL(urls[idx])) {
-                    usedIndexes.add(idx);
-                    return `<img src="${escapeHTML(urls[idx])}" class="inline-post-img" alt="Фото" loading="lazy">`;
-                }
-                return "";
-            });
+            // Вставляем картинки только если это не видео/музыка
+            if (sectionId !== 'video' && sectionId !== 'music') {
+                safeText = safeText.replace(/\[img(\d+)\]/g, (match, num) => {
+                    const idx = parseInt(num) - 1;
+                    if (urls[idx] && isValidURL(urls[idx])) {
+                        usedIndexes.add(idx);
+                        return `<img src="${escapeHTML(urls[idx])}" class="inline-post-img" alt="Фото" loading="lazy">`;
+                    }
+                    return "";
+                });
+            }
 
             safeText = sanitizeHTML(safeText);
 
             let topImagesHtml = "";
-            urls.forEach((url, idx) => {
-                if (!usedIndexes.has(idx) && isValidURL(url)) {
-                    topImagesHtml += `<img src="${escapeHTML(url)}" class="inline-post-img" style="margin-bottom:15px;" alt="Фото" loading="lazy">`;
-                }
-            });
+            // Добавляем остальные картинки только если это не видео/музыка
+            if (sectionId !== 'video' && sectionId !== 'music') {
+                urls.forEach((url, idx) => {
+                    if (!usedIndexes.has(idx) && isValidURL(url)) {
+                        // Проверяем расширение, чтобы не вставить видео/аудио как картинку
+                        const isImg = /\.(jpg|jpeg|png|gif|webp|svg|bmp)(\?.*)?$/i.test(url);
+                        if (isImg) {
+                            topImagesHtml += `<img src="${escapeHTML(url)}" class="inline-post-img" style="margin-bottom:15px;" alt="Фото" loading="lazy">`;
+                        }
+                    }
+                });
+            }
 
             return topImagesHtml + `<div class="word-text i18n-translatability" data-original="${escapeHTML(text || "")}">${safeText}</div>`;
         };
@@ -212,8 +223,11 @@
 
         // --- Навигация с анимацией ---
         window.switchTab = function(tabId) {
+            // Принудительный выход из поста, если открыт
+            if (currentPostId) {
+                window.closePostPage();
+            }
             currentSection = tabId;
-            currentPostId = null;
             document.querySelectorAll('.main-section').forEach(sec => {
                 sec.classList.remove('active-anim');
                 sec.style.display = 'none';
@@ -221,7 +235,6 @@
             const target = document.getElementById(`section-${tabId}`);
             if (target) {
                 target.style.display = 'block';
-                // Принудительный рефлоу для перезапуска анимации
                 void target.offsetWidth;
                 target.classList.add('active-anim');
             }
@@ -254,9 +267,9 @@
                 if (match) {
                     card.style.display = '';
                     card.classList.add('card-appear');
-                    void card.offsetWidth; // рефлоу
+                    void card.offsetWidth;
                     card.style.animation = 'none';
-                    card.offsetHeight; // триггер рефлоу
+                    card.offsetHeight;
                     card.style.animation = '';
                 } else {
                     card.style.display = 'none';
@@ -279,11 +292,10 @@
             closeFilterModal();
         };
 
-        // --- Post Page (с очисткой URL) ---
+        // --- Post Page ---
         window.openPostPage = async function(collectionName, docId) {
             currentPostId = docId;
             
-            // Сохраняем "чистую" ссылку в историю (без ?id=)
             const cleanUrl = `${window.location.origin}/${collectionName}/${docId}`;
             window.history.pushState({ id: docId, collection: collectionName }, '', cleanUrl);
             
@@ -344,7 +356,8 @@
             if (score > 0) { ratingScoreClass = "positive"; scoreText = `+${score}`; }
             else if (score < 0) { ratingScoreClass = "negative"; scoreText = `${score}`; }
             
-            let parsedContent = window.parseContent(data.text, data.mediaUrls, data.mediaUrl);
+            // Передаём sectionId в parseContent
+            let parsedContent = window.parseContent(data.text, data.mediaUrls, data.mediaUrl, collectionName);
             
             const attachmentsHtml = (data.attachments && data.attachments.length > 0)
                 ? `<div class="attachments-list">${data.attachments.map(a => `<a href="${a.url}" target="_blank" class="attachment-link"><i class="material-icons-round">attach_file</i> ${escapeHTML(a.name || 'Файл')}</a>`).join('')}</div>`
@@ -355,19 +368,41 @@
                 mediaBlock = `
                     <div class="custom-video-player" style="margin-bottom:20px;">
                         <div class="v-wrapper">
-                            <video src="${safeMediaUrl}" controls></video>
+                            <video preload="metadata" playsinline webkit-playsinline data-src="${safeMediaUrl}"></video>
+                            <div class="v-overlay"><button class="v-play-center" type="button"><i class="material-icons-round">play_arrow</i></button></div>
+                            <div class="v-gesture-speed"><i class="material-icons-round">fast_forward</i> 2X</div>
+                            <div class="v-gesture-seek v-gesture-seek-left"><i class="material-icons-round">fast_rewind</i> <span>-5 сек</span></div>
+                            <div class="v-gesture-seek v-gesture-seek-right"><i class="material-icons-round">fast_forward</i> <span>+5 сек</span></div>
+                        </div>
+                        <div class="v-controls">
+                            <button class="v-btn v-play-btn" type="button"><i class="material-icons-round">play_arrow</i></button>
+                            <div class="v-progress-bar"><div class="v-progress-fill"></div></div>
+                            <span class="v-time-display">00:00 / 00:00</span>
+                            <div style="position: relative;">
+                                <button class="v-btn v-more-btn" type="button" title="Ещё"><i class="material-icons-round">more_vert</i></button>
+                                <div class="v-more-menu">
+                                    <button class="v-menu-item v-menu-mute" type="button"><i class="material-icons-round">volume_off</i> Убрать звук</button>
+                                    <button class="v-menu-item v-menu-speed" type="button"><i class="material-icons-round">speed</i> Скорость</button>
+                                    <button class="v-menu-item v-menu-quality" type="button"><i class="material-icons-round">high_quality</i> Качество</button>
+                                    <button class="v-menu-item v-menu-download" type="button"><i class="material-icons-round">file_download</i> Скачать</button>
+                                    <button class="v-menu-item v-menu-share" type="button"><i class="material-icons-round">share</i> Поделиться</button>
+                                </div>
+                            </div>
+                            <button class="v-btn v-fs-btn" type="button" title="На весь экран"><i class="material-icons-round">fullscreen</i></button>
                         </div>
                     </div>`;
             } else if (collectionName === 'music' && safeMediaUrl) {
                 mediaBlock = `
                     <div class="custom-audio-player" style="margin-bottom:20px;">
-                        <audio src="${safeMediaUrl}" controls></audio>
+                        <audio src="${safeMediaUrl}" preload="metadata"></audio>
+                        <button class="play-btn" type="button"><i class="material-icons-round">play_arrow</i></button>
+                        <div class="progress-bar"><div class="progress-fill"></div></div>
+                        <span class="time-display">00:00 / 00:00</span>
                     </div>`;
-            } else if (safeMediaUrl) {
+            } else if (safeMediaUrl && /\.(jpg|jpeg|png|gif|webp|svg|bmp)(\?.*)?$/i.test(safeMediaUrl)) {
                 mediaBlock = `<img src="${safeMediaUrl}" class="inline-post-img" style="margin-bottom:20px; max-height:400px;">`;
             }
 
-            // Обновление мета-тегов для соцсетей
             updateMetaTags(safeTitle, data.text, safeMediaUrl);
 
             postPage.innerHTML = `
@@ -406,8 +441,16 @@
                     </div>
                 </div>
             `;
-            // Анимация появления
             postPage.querySelector('.post-page-container').classList.add('slide-up');
+
+            // Инициализация плееров на странице поста
+            if (collectionName === 'video') {
+                const player = postPage.querySelector('.custom-video-player');
+                if (player) window.initCustomVideoPlayer(player.parentElement);
+            } else if (collectionName === 'music') {
+                const player = postPage.querySelector('.custom-audio-player');
+                if (player) window.initCustomAudioPlayer(player.parentElement);
+            }
         }
 
         function updateMetaTags(title, text, imageUrl) {
@@ -425,7 +468,7 @@
             document.getElementById('twitter-image').content = finalImage;
         }
 
-        // --- Поделиться (красивая ссылка) ---
+        // --- Поделиться ---
         window.sharePost = function(title, cleanUrl) {
             const finalUrl = cleanUrl || window.location.href;
             if (navigator.share) {
@@ -437,7 +480,7 @@
             }
         };
 
-        // --- Toast-уведомление ---
+        // --- Toast ---
         function showToast(message) {
             let toast = document.getElementById('toast');
             if (!toast) {
@@ -514,7 +557,7 @@
             setTimeout(() => { if (currentLang !== 'ru') container.style.display = 'none'; }, 1500);
         }
 
-        // --- Voting (с защитой от двойного клика) ---
+        // --- Voting ---
         window.handleVote = async function(postId, voteType, sectionId, context = 'card') {
             let card = null;
             let plusBtn = null, minusBtn = null, ratingDisplay = null;
@@ -596,7 +639,7 @@
             try { await updateDoc(doc(db, sectionId, postId), { rating: increment(delta) }); } catch (err) { console.warn(err); }
         };
 
-        // --- Video Player ---
+        // --- Video Player (с защитой от кликов) ---
         window.initCustomVideoPlayer = function(container) {
             const player = container.querySelector('.custom-video-player');
             if (!player) return;
@@ -640,7 +683,8 @@
                 video.currentTime = 0.1;
                 if (timeDisplay) timeDisplay.textContent = `00:00 / ${formatTime(video.duration)}`;
             });
-            function togglePlay() {
+            function togglePlay(e) {
+                if (e) e.stopPropagation();
                 if (!isLoaded) {
                     loadVideo(); video.autoplay = true;
                     if (video.readyState >= 1) video.play().catch(() => {});
@@ -651,8 +695,8 @@
                     video.play().catch(() => {});
                 } else video.pause();
             }
-            if (playCenterBtn) playCenterBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
-            if (playBtn) playBtn.addEventListener('click', (e) => { e.stopPropagation(); togglePlay(); });
+            if (playCenterBtn) playCenterBtn.addEventListener('click', togglePlay);
+            if (playBtn) playBtn.addEventListener('click', togglePlay);
             if (overlay) overlay.addEventListener('click', togglePlay);
 
             let lastTapTime = 0, longPressTimer = null;
@@ -718,10 +762,10 @@
                 if (video.duration) { video.currentTime = pos * video.duration; progressFill.style.width = `${pos * 100}%`; }
             }
             if (progressBar) {
-                progressBar.addEventListener('mousedown', (e) => { isVideoDragging = true; scrubVideo(e); });
+                progressBar.addEventListener('mousedown', (e) => { e.stopPropagation(); isVideoDragging = true; scrubVideo(e); });
                 window.addEventListener('mousemove', (e) => { if (isVideoDragging) scrubVideo(e); });
                 window.addEventListener('mouseup', () => { isVideoDragging = false; });
-                progressBar.addEventListener('touchstart', (e) => { isVideoDragging = true; scrubVideo(e); }, {passive: true});
+                progressBar.addEventListener('touchstart', (e) => { e.stopPropagation(); isVideoDragging = true; scrubVideo(e); }, {passive: true});
                 window.addEventListener('touchmove', (e) => { if (isVideoDragging) scrubVideo(e); }, {passive: true});
                 window.addEventListener('touchend', () => { isVideoDragging = false; });
             }
@@ -765,14 +809,18 @@
             if (menuShareBtn) {
                 menuShareBtn.addEventListener('click', (e) => {
                     e.stopPropagation(); if (moreMenu) moreMenu.classList.remove('open');
-                    const shareUrl = `${window.location.origin}/video/${container.closest('.card').dataset.id}`;
-                    sharePost(container.closest('.card').querySelector('h3').textContent, shareUrl);
+                    const card = player.closest('.card');
+                    if (card) {
+                        const shareUrl = `${window.location.origin}/video/${card.dataset.id}`;
+                        sharePost(card.querySelector('h3').textContent, shareUrl);
+                    }
                 });
             }
             player.addEventListener('mouseenter', loadVideo, { once: true });
             player.addEventListener('touchstart', loadVideo, { once: true });
         };
 
+        // --- Audio Player (с защитой от кликов) ---
         window.initCustomAudioPlayer = function(container) {
             const player = container.querySelector('.custom-audio-player');
             if (!player) return;
@@ -783,7 +831,11 @@
             const progressFill = player.querySelector('.progress-fill');
             const timeDisplay = player.querySelector('.time-display');
             const formatTime = (s) => { if (isNaN(s)) return "00:00"; const m = Math.floor(s/60), sec = Math.floor(s%60); return `${m<10?'0':''}${m}:${sec<10?'0':''}${sec}`; };
-            playBtn.addEventListener('click', () => { audio.paused ? audio.play() : audio.pause(); });
+            
+            playBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                audio.paused ? audio.play() : audio.pause();
+            });
             audio.addEventListener('play', () => { playIcon.textContent = 'pause'; });
             audio.addEventListener('pause', () => { playIcon.textContent = 'play_arrow'; });
             audio.addEventListener('timeupdate', () => {
@@ -799,10 +851,10 @@
                 const pos = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
                 if (audio.duration) { audio.currentTime = pos * audio.duration; progressFill.style.width = `${pos * 100}%`; }
             }
-            progressBar.addEventListener('mousedown', (e) => { isDragging = true; scrub(e); });
+            progressBar.addEventListener('mousedown', (e) => { e.stopPropagation(); isDragging = true; scrub(e); });
             window.addEventListener('mousemove', (e) => { if (isDragging) scrub(e); });
             window.addEventListener('mouseup', () => { isDragging = false; });
-            progressBar.addEventListener('touchstart', (e) => { isDragging = true; scrub(e); }, {passive: true});
+            progressBar.addEventListener('touchstart', (e) => { e.stopPropagation(); isDragging = true; scrub(e); }, {passive: true});
             window.addEventListener('touchmove', (e) => { if (isDragging) scrub(e); }, {passive: true});
             window.addEventListener('touchend', () => { isDragging = false; });
         };
@@ -997,7 +1049,9 @@
                 let ratingScoreClass = "neutral", scoreText = "0";
                 if (score > 0) { ratingScoreClass = "positive"; scoreText = `+${score}`; }
                 else if (score < 0) { ratingScoreClass = "negative"; scoreText = `${score}`; }
-                let parsedContent = window.parseContent(data.text, data.mediaUrls, data.mediaUrl);
+                
+                // Передаём sectionId в parseContent
+                let parsedContent = window.parseContent(data.text, data.mediaUrls, data.mediaUrl, sectionId);
                 
                 const cleanShareUrl = `${window.location.origin}/${sectionId}/${id}`;
                 const ratingModuleHtml = `
@@ -1092,7 +1146,7 @@
                                 ${timeSlot}
                             </div>
                             <div class="scroll-content">
-                                ${safeMediaUrl ? `<img src="${safeMediaUrl}" class="inline-post-img" style="max-height:150px;">` : ''}
+                                ${safeMediaUrl && /\.(jpg|jpeg|png|gif|webp|svg|bmp)(\?.*)?$/i.test(safeMediaUrl) ? `<img src="${safeMediaUrl}" class="inline-post-img" style="max-height:150px;">` : ''}
                                 ${parsedContent}
                                 ${safeFileUrl ? `<a href="${safeFileUrl}" target="_blank" class="btn-book">Скачать книгу</a>` : ''}
                                 ${attachmentsHtml}
@@ -1134,7 +1188,6 @@
             switchTab('posts');
             initCosmicBackground();
 
-            // Проверка URL на наличие ID поста (новый формат /collection/id)
             const pathParts = window.location.pathname.split('/').filter(Boolean);
             if (pathParts.length >= 2) {
                 const col = pathParts[0];
@@ -1480,7 +1533,6 @@
         
         footer { background: #050505; border-top: 1px solid #222; padding: 40px 20px; text-align: center; position: relative; z-index: 10; }
 
-        /* Страница поста */
         #post-page {
             display: none; position: relative; z-index: 10;
             margin-top: 64px; padding: 40px 20px 60px 20px;
@@ -1520,31 +1572,13 @@
         }
         .share-btn:hover { border-color: var(--poster-yellow); color: var(--poster-yellow); }
 
-        /* Анимации */
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-        @keyframes slideUp {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-        /* Лоадер */
-        .loader-container {
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            padding: 50px; color: var(--text-muted); gap: 15px;
-        }
-        .loader {
-            width: 40px; height: 40px; border: 3px solid #333; border-top-color: var(--poster-yellow);
-            border-radius: 50%; animation: spin 1s linear infinite;
-        }
+        .loader-container { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 50px; color: var(--text-muted); gap: 15px; }
+        .loader { width: 40px; height: 40px; border: 3px solid #333; border-top-color: var(--poster-yellow); border-radius: 50%; animation: spin 1s linear infinite; }
 
-        /* Toast */
         .toast {
             position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(100px);
             background: var(--poster-yellow); color: #000; padding: 12px 24px;
@@ -1655,45 +1689,34 @@
         </div>
     </section>
 
-    <!-- Секция: Посты -->
     <section id="section-posts" class="main-section section-block" data-section="posts">
-        <div class="section-header-row">
-            <h2 class="section-title">ПОСТЫ</h2>
-        </div>
+        <div class="section-header-row"><h2 class="section-title">ПОСТЫ</h2></div>
         <div class="search-row">
             <div class="search-input-wrapper">
                 <i class="material-icons-round search-icon">search</i>
                 <input type="text" id="search-input-posts" class="author-search-input" placeholder="Поиск..." oninput="applySearchAndFilter('posts')">
             </div>
-            <button class="filter-btn" onclick="openFilterModal()" title="Фильтры">
-                <i class="material-icons-round">tune</i>
-            </button>
+            <button class="filter-btn" onclick="openFilterModal()" title="Фильтры"><i class="material-icons-round">tune</i></button>
         </div>
         <div id="container-posts" class="grid-display">
             <div class="card media-card-stable"><p style="text-align:center; color:#888;">Загрузка...</p></div>
         </div>
     </section>
 
-    <!-- Секция: Статьи -->
     <section id="section-articles" class="main-section section-block" data-section="articles">
-        <div class="section-header-row">
-            <h2 class="section-title">СТАТЬИ</h2>
-        </div>
+        <div class="section-header-row"><h2 class="section-title">СТАТЬИ</h2></div>
         <div class="search-row">
             <div class="search-input-wrapper">
                 <i class="material-icons-round search-icon">search</i>
                 <input type="text" id="search-input-articles" class="author-search-input" placeholder="Поиск..." oninput="applySearchAndFilter('articles')">
             </div>
-            <button class="filter-btn" onclick="openFilterModal()" title="Фильтры">
-                <i class="material-icons-round">tune</i>
-            </button>
+            <button class="filter-btn" onclick="openFilterModal()" title="Фильтры"><i class="material-icons-round">tune</i></button>
         </div>
         <div id="container-articles" class="grid-display">
             <div class="card media-card-stable"><p style="text-align:center; color:#888;">Загрузка...</p></div>
         </div>
     </section>
 
-    <!-- Секция: Фотогалерея -->
     <section id="section-photo" class="main-section section-block" data-section="photo">
         <div class="section-header-row"><h2 class="section-title">ФОТОГАЛЕРЕЯ</h2></div>
         <div class="search-row">
@@ -1701,16 +1724,13 @@
                 <i class="material-icons-round search-icon">search</i>
                 <input type="text" id="search-input-photo" class="author-search-input" placeholder="Поиск..." oninput="applySearchAndFilter('photo')">
             </div>
-            <button class="filter-btn" onclick="openFilterModal()" title="Фильтры">
-                <i class="material-icons-round">tune</i>
-            </button>
+            <button class="filter-btn" onclick="openFilterModal()" title="Фильтры"><i class="material-icons-round">tune</i></button>
         </div>
         <div id="container-photo" class="grid-display">
             <div class="card media-card-stable"><p style="text-align:center; color:#888;">Загрузка...</p></div>
         </div>
     </section>
 
-    <!-- Секция: Видеоархив -->
     <section id="section-video" class="main-section section-block" data-section="video">
         <div class="section-header-row"><h2 class="section-title">ВИДЕОАРХИВ</h2></div>
         <div class="search-row">
@@ -1718,16 +1738,13 @@
                 <i class="material-icons-round search-icon">search</i>
                 <input type="text" id="search-input-video" class="author-search-input" placeholder="Поиск..." oninput="applySearchAndFilter('video')">
             </div>
-            <button class="filter-btn" onclick="openFilterModal()" title="Фильтры">
-                <i class="material-icons-round">tune</i>
-            </button>
+            <button class="filter-btn" onclick="openFilterModal()" title="Фильтры"><i class="material-icons-round">tune</i></button>
         </div>
         <div id="container-video" class="grid-display">
             <div class="card media-card-stable"><p style="text-align:center; color:#888;">Загрузка...</p></div>
         </div>
     </section>
 
-    <!-- Секция: Музыка -->
     <section id="section-music" class="main-section section-block" data-section="music">
         <div class="section-header-row"><h2 class="section-title">МУЗЫКАЛЬНЫЙ АРХИВ</h2></div>
         <div class="search-row">
@@ -1735,16 +1752,13 @@
                 <i class="material-icons-round search-icon">search</i>
                 <input type="text" id="search-input-music" class="author-search-input" placeholder="Поиск..." oninput="applySearchAndFilter('music')">
             </div>
-            <button class="filter-btn" onclick="openFilterModal()" title="Фильтры">
-                <i class="material-icons-round">tune</i>
-            </button>
+            <button class="filter-btn" onclick="openFilterModal()" title="Фильтры"><i class="material-icons-round">tune</i></button>
         </div>
         <div id="container-music" class="grid-display">
             <div class="card media-card-stable"><p style="text-align:center; color:#888;">Загрузка...</p></div>
         </div>
     </section>
 
-    <!-- Секция: Библиотека -->
     <section id="section-books" class="main-section section-block" data-section="books">
         <div class="section-header-row"><h2 class="section-title">БИБЛИОТЕКА</h2></div>
         <div class="search-row">
@@ -1752,9 +1766,7 @@
                 <i class="material-icons-round search-icon">search</i>
                 <input type="text" id="search-input-books" class="author-search-input" placeholder="Поиск..." oninput="applySearchAndFilter('books')">
             </div>
-            <button class="filter-btn" onclick="openFilterModal()" title="Фильтры">
-                <i class="material-icons-round">tune</i>
-            </button>
+            <button class="filter-btn" onclick="openFilterModal()" title="Фильтры"><i class="material-icons-round">tune</i></button>
         </div>
         <div id="container-books" class="grid-display">
             <div class="card media-card-stable"><p style="text-align:center; color:#888;">Загрузка...</p></div>
@@ -1764,7 +1776,6 @@
 
 <div id="post-page"></div>
 
-<!-- Модальное окно Входа / Регистрации -->
 <div class="modal-overlay" id="auth-modal">
     <div class="modal-card">
         <button onclick="closeAuthModal()" style="position: absolute; top: 16px; right: 16px; background: none; border: none; color: #666; cursor: pointer;"><i class="material-icons-round">close</i></button>
@@ -1781,7 +1792,6 @@
     </div>
 </div>
 
-<!-- Модальное окно фильтров -->
 <div class="modal-overlay" id="filter-modal">
     <div class="modal-card">
         <h4>Фильтры поиска</h4>
@@ -1794,7 +1804,6 @@
     </div>
 </div>
 
-<!-- Модальное окно качества / скорости -->
 <div class="modal-overlay" id="selector-modal">
     <div class="modal-card">
         <h4 id="selector-modal-title">Параметр</h4>
